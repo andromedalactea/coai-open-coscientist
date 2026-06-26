@@ -10,13 +10,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # copy dependency files
-COPY mcp_server/pyproject.toml ./mcp_server/
+COPY mcps/mcp_server/pyproject.toml ./mcp_server/
 
 # install python dependencies
 RUN pip install --no-cache-dir -e ./mcp_server
 
 # copy application code
-COPY mcp_server/ ./mcp_server/
+COPY mcps/mcp_server/ ./mcp_server/
 
 # expose port
 EXPOSE 8888

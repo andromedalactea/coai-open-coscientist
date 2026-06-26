@@ -360,7 +360,7 @@ from open_coscientist import HypothesisGenerator
 
 async def main():
     generator = HypothesisGenerator(
-        model_name="gemini/gemini-2.5-flash",
+        model_name="gemini/gemini-3-flash",
         tools_config="path/to/my_config.yaml"
     )
 

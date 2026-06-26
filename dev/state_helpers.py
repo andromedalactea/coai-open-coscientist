@@ -16,7 +16,7 @@ console = Console()
 
 def make_base_state(
     research_goal: str = "How can we detect Alzheimer's disease earlier using retinal imaging?",
-    model_name: str = "gemini/gemini-2.5-flash",
+    model_name: str = "gemini/gemini-3-flash",
     initial_hypotheses_count: int = 3,
     max_iterations: int = 0,
 ) -> WorkflowState:
@@ -48,9 +48,9 @@ def make_base_state(
     }
 
 
-def make_supervisor_state(
+async def make_supervisor_state(
     research_goal: str = "How can we detect Alzheimer's disease earlier using retinal imaging?",
-    model_name: str = "gemini/gemini-2.5-flash",
+    model_name: str = "gemini/gemini-3-flash",
 ) -> WorkflowState:
     """
     Base state with supervisor guidance populated.
@@ -59,13 +59,12 @@ def make_supervisor_state(
     Note: this creates a REAL supervisor output by calling the supervisor node.
     """
     from open_coscientist.nodes.supervisor import supervisor_node
-    import asyncio
 
     base = make_base_state(research_goal, model_name)
 
     # Run supervisor to get real guidance
     console.print("[dim]Running supervisor node to create realistic state...[/dim]")
-    result = asyncio.run(supervisor_node(base))
+    result = await supervisor_node(base)
 
     base.update(result)
     console.print(f"[dim]Supervisor guidance keys: {list(base['supervisor_guidance'].keys())}[/dim]")
@@ -75,7 +74,7 @@ def make_supervisor_state(
 
 def make_literature_state(
     research_goal: str = "How can we detect Alzheimer's disease earlier using retinal imaging?",
-    model_name: str = "gemini/gemini-2.5-flash",
+    model_name: str = "gemini/gemini-3-flash",
     run_real_lit_review: bool = False,
 ) -> WorkflowState:
     """
@@ -128,9 +127,9 @@ microvasculature changes appear years before cognitive symptoms
     return base
 
 
-def make_generate_state(
+async def make_generate_state(
     research_goal: str = "How can we detect Alzheimer's disease earlier using retinal imaging?",
-    model_name: str = "gemini/gemini-2.5-flash",
+    model_name: str = "gemini/gemini-3-flash",
     with_literature: bool = False,
 ) -> WorkflowState:
     """
@@ -138,7 +137,7 @@ def make_generate_state(
 
     Use this for testing generate node directly.
     """
-    state = make_supervisor_state(research_goal, model_name)
+    state = await make_supervisor_state(research_goal, model_name)
 
     if with_literature:
         lit_state = make_literature_state(research_goal, model_name, run_real_lit_review=False)

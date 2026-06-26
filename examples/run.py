@@ -16,41 +16,84 @@ Prerequisites:
 which depends on the MODEL_NAME you set below.
 """
 
-MODEL_NAME = "gemini/gemini-2.5-flash"
+MODEL_NAME = "openai/gpt-5-nano"
+
+goal = """
+Role:
+Act as an autonomous computational scientist specializing in the discovery of life through astronomical and physical data.
+
+The Mission:
+Your objective is to identify and investigate potential biosignatures—measurable phenomena that indicate the presence of biological processes—within any available scientific datasets. You must operate with zero a priori assumptions regarding the biological mechanisms, chemical environments, or specific planetary contexts involved.
+
+Operational Mode:
+Operate as a lead researcher with full autonomy:
+
+Hypothesize: Define your own testable hypotheses based on first principles, thermodynamic disequilibrium, or statistical anomalies found in data.
+
+Experiment: Design and execute computational experiments (simulations, statistical tests, or data mining) to validate or refute these hypotheses.
+
+Pivot: If a specific line of inquiry (e.g., a certain chemical pair) fails to show significance, document the failure and immediately switch to a different strategy or dataset.
+
+Synthesize: Connect disparate findings into a cohesive theory of detectability.
+
+Core Principle:
+Discovery must be strictly evidence-driven and computational. Literature review should only serve as a baseline for novelty. Your conclusions must be anchored in executed code, precise numerical results, and quantified uncertainty.
+
+Minimum Scientific Standards:
+
+Execution: Run actual code (e.g., Python) to perform calculations or query real archives. Do not describe a calculation; execute it.
+
+Quantification: Report specific values (p-values, ΔG, signal-to-noise ratios, confidence intervals). Avoid qualitative generalizations.
+
+Abiotic False Positives: For every candidate biosignature, you must computationally test and attempt to refute it using abiotic (non-biological) explanations.
+
+Traceability: Ensure every step of your reasoning is linked to a specific code output or data source for replication.
+
+Expected Output (Research Report):
+
+The Biosignature Candidate: Description of the phenomenon and the rationale for its biological origin.
+
+Computational Evidence: Tables, figures, and statistical results derived from executed code.
+
+Environmental Context: Description of the conditions where this signature would be valid/detectable.
+
+Falsification Analysis: Results of the "abiotic test" and final confidence level.
+
+Next Experiments: Concrete steps to further validate the finding with future data.
+
+Important:
+Scientific honesty is paramount. If no robust candidate biosignature survives your computational scrutiny, explicitly conclude that the search was negative and explain the failure modes of the hypotheses tested.
+"""
 
 async def main():
-    # Prompt user for research goal with rich formatting
     console = Console()
     console.print()
     console.print(
         Panel(
-            "[bold]Enter research goal[/bold]\n\n"
-            "[dim]For example:[/dim] Develop novel approaches for early detection of "
-            "Alzheimer's disease using non-invasive biomarkers",
+            goal,
             title="[cyan]Research Goal[/cyan]",
             border_style="cyan",
         )
     )
-    research_goal = console.input("\n[bold cyan]Research goal:[/bold cyan] ").strip()
+    research_goal = console.input("\n[bold cyan]Research goal (Enter to use above):[/bold cyan] ").strip()
     if not research_goal:
-        console.print("[bold red]Error:[/bold red] Research goal cannot be empty.")
-        return
+        research_goal = goal
+        console.print("[dim]Using pre-defined research goal.[/dim]")
+
     generator = HypothesisGenerator(
         model_name=MODEL_NAME,
         max_iterations=2,
         initial_hypotheses_count=7,
         evolution_max_count=4,
+        tools_config="src/open_coscientist/config/examples/academic_semantic_scholar.yaml",
     )
 
-    # for rich terminal output
     reporter = ConsoleReporter()
 
-    # wrap with built-in console/terminal reporter
-    await reporter.run(
+    last_state = await reporter.run(
         event_stream=generator.generate_hypotheses(
             research_goal=research_goal,
             progress_callback=default_progress_callback,
-            # explicitly enable literature review/generate with tool calling
             opts={
                 "enable_literature_review_node": True,
                 "enable_tool_calling_generation": True,

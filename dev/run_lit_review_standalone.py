@@ -100,7 +100,7 @@ async def test_literature_review():
     # Create minimal state
     state = make_base_state(
         research_goal="How can we detect Alzheimer's disease earlier using retinal imaging?",
-        model_name="gemini/gemini-2.5-flash",
+        model_name="gemini/gemini-3-flash",
     )
     state["mcp_available"] = mcp_ok
     state["pubmed_available"] = pubmed_ok

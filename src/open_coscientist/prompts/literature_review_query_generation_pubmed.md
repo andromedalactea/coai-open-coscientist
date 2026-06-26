@@ -17,16 +17,15 @@ Instructions:
 5. Queries should be comprehensive enough to capture relevant papers but focused enough to stay on topic
 
 Good query examples:
-- "retinal imaging biomarkers Alzheimer disease early detection"
-- "amyloid beta tau protein retinal deposits"
-- "optical coherence tomography neurodegeneration"
-- "machine learning protein structure prediction AlphaFold"
+- "retinal imaging Alzheimer"
+- "amyloid beta retina"
+- "OCT neurodegeneration"
+- "machine learning AlphaFold"
 
 Query design tips:
 - Use specific terminology relevant to the field
-- Include key concepts separated by spaces
-- Target different aspects: methods, mechanisms, applications, specific proteins/pathways
-- Keep queries between 3-8 key terms
+- Target different aspects: methods, mechanisms, applications
+- VERY IMPORTANT: Keep queries SHORT and BROAD (1 to 4 keywords MAXIMUM). Using long specific phrases will result in 0 papers found.
 - Think about what would capture the most relevant recent research
 
 Return your queries as a JSON array of strings.

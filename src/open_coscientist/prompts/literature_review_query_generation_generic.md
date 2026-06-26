@@ -17,8 +17,8 @@ Instructions:
 
 Query design tips:
 - Use specific terminology relevant to the field
-- Include key concepts (methods, mechanisms, applications, specific proteins/pathways)
 - Target different aspects of the research goal
-- Keep queries between 3-8 key terms
+- VERY IMPORTANT: Keep queries SHORT and BROAD (1 to 4 keywords MAXIMUM). Using long specific phrases or full sentences will result in 0 papers found.
+- DO NOT use AND/OR operators unless explicitly supported by the search backend. Usually space-separated keywords are best.
 
 Return your queries as a JSON array of strings.

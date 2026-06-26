@@ -21,7 +21,7 @@ from open_coscientist import HypothesisGenerator, clear_cache, get_cache_stats
 async def run_generation():
     """Run a simple generation to test caching."""
     generator = HypothesisGenerator(
-        model_name="gemini/gemini-2.5-flash",
+        model_name="gemini/gemini-3-flash",
         max_iterations=0,  # No iterations for faster testing
         initial_hypotheses_count=3,
         evolution_max_count=2,

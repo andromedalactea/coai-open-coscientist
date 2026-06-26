@@ -4,6 +4,7 @@ Constants and configuration values for Open Coscientist.
 Centralizes magic numbers and configuration values for better maintainability.
 """
 
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,20 +21,32 @@ ELO_K_FACTOR = 24
 """K-factor for Elo rating updates (higher = more volatile ratings)."""
 
 # LLM API parameters
-DEFAULT_MAX_TOKENS = 4000
+DEFAULT_MAX_TOKENS = int(os.environ.get("DEFAULT_MAX_TOKENS", "25000"))
 """Default max tokens for standard LLM calls."""
 
-EXTENDED_MAX_TOKENS = 8000
+SUMMARISER_MAX_TOKENS = int(os.environ.get("SUMMARISER_MAX_TOKENS", "35000"))
+"""Max tokens for research summaries and log aggregations."""
+
+EXTENDED_MAX_TOKENS = int(os.environ.get("EXTENDED_MAX_TOKENS", "35000"))
 """Max tokens for detailed responses (reviews, evolution)."""
 
-LONG_MAX_TOKENS = 10000
+LONG_MAX_TOKENS = int(os.environ.get("LONG_MAX_TOKENS", "45000"))
 """Max tokens for complex multi-hypothesis operations."""
 
-LITERATURE_REVIEW_MAX_TOKENS = 8000
+LITERATURE_REVIEW_MAX_TOKENS = int(os.environ.get("LITERATURE_REVIEW_MAX_TOKENS", "35000"))
 """Max tokens for literature review analyses (synthesis outputs)."""
 
-THINKING_MAX_TOKENS = 18000
+THINKING_MAX_TOKENS = int(os.environ.get("THINKING_MAX_TOKENS", "50000"))
 """Max tokens for extended thinking + long responses."""
+
+DEEPSEEK_MAX_OUTPUT_TOKENS = int(os.environ.get("DEEPSEEK_MAX_OUTPUT_TOKENS", "8192"))
+"""DeepSeek API max output tokens (deepseek-chat=8192, deepseek-reasoner can go higher).
+Override via DEEPSEEK_MAX_OUTPUT_TOKENS env var if using a model with higher limits."""
+
+LARGE_CONTEXT_MODEL = os.environ.get("LARGE_CONTEXT_MODEL", "gemini/gemini-2.5-pro")
+"""Fallback model used when a ContextWindowExceededError occurs.
+Should be a model with a very large context window (e.g. Gemini 2.5 Pro = 1M tokens).
+Override via LARGE_CONTEXT_MODEL env var."""
 
 # Temperature settings
 LOW_TEMPERATURE = 0.3
@@ -64,11 +77,11 @@ DEBATE_MIN_TURNS = 3
 DEBATE_MAX_TURNS = 5
 """Default number of debate turns (can be up to 10)."""
 
-DEFAULT_INITIAL_HYPOTHESES_COUNT = 5
-"""Default number of initial hypotheses to generate."""
+DEFAULT_INITIAL_HYPOTHESES_COUNT = 12
+"""Default number of initial hypotheses to generate to ensure a wide search space."""
 
-DEFAULT_EVOLUTION_MAX_COUNT = 3
-"""Default number of top hypotheses to evolve and keep."""
+DEFAULT_EVOLUTION_MAX_COUNT = 4
+"""Default number of top hypotheses to select for refinement (3:1 selection ratio)."""
 
 # Similarity thresholds
 DUPLICATE_SIMILARITY_THRESHOLD = 0.95

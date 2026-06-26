@@ -167,6 +167,9 @@ class WorkflowState(TypedDict):
     run_id: str
     """Unique identifier for this run (used for logging)."""
 
+    run_dir: Optional[str]
+    """Absolute path to this run's output folder."""
+
     # Progress Callback
     progress_callback: Optional[Callable[[str, Dict[str, Any]], None]]
     """Optional callback for progress updates."""

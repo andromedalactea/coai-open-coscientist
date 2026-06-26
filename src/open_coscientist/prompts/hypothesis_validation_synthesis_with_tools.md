@@ -122,6 +122,11 @@ Metrics: [Specific measurements and success criteria]
 Validation: [What results would validate/invalidate the hypothesis]
 ```
 
+### 5. Literature Implementation Details (required)
+Extract specific methodological details, equations, libraries, parameters, or data sources from the cited literature.
+- This information will be directly used by a Code Agent to implement the experiment. 
+- Explain exactly how methods were implemented in previous papers.
+
 ## Guidelines
 
 - Be honest about overlap - better to pivot than claim false novelty
@@ -145,6 +150,7 @@ Validation: [What results would validate/invalidate the hypothesis]
       "explanation": "Step-by-step layman explanation breaking down the technical hypothesis (4-6 sentences)",
       "literature_grounding": "Explicit citations in (Author et al., year) format connecting specific findings to hypothesis. 2-4 sentences with citations.",
       "experiment": "Concrete experiment design with models, datasets, metrics, and validation criteria (4-6 sentences)",
+      "literature_implementation_details": "Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.",
       "novelty_validation": {
         "decision": "approved|refined|pivoted"
       }
@@ -158,6 +164,7 @@ Validation: [What results would validate/invalidate the hypothesis]
 - `explanation`: Clear explanation for technical audiences in layman terms
 - `literature_grounding`: **CRITICAL - Use proper citations in (Author et al., year) format. Include papers from draft's literature_sources plus any papers found via tools.**
 - `experiment`: Concrete, actionable experiment design to test the hypothesis
+- `literature_implementation_details`: Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.
 - `novelty_validation.decision`: Must be one of "approved", "refined", or "pivoted"
 
 Output {{hypotheses_count}} validated hypotheses now. Output raw JSON with "hypotheses" array containing objects with all required fields above.

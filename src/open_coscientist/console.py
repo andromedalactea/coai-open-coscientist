@@ -10,6 +10,7 @@ import logging
 import sys
 import time
 import warnings
+from pathlib import Path
 from typing import Any, AsyncIterator, Coroutine, Dict, Optional, Tuple
 
 from rich.console import Console
@@ -18,6 +19,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from .constants import LITERATURE_REVIEW_FAILED
+from .run_output import RunFolder, RunTracer
 
 
 class FilteredStderr:
@@ -136,10 +138,15 @@ class ConsoleReporter:
         # original stderr for restoration
         self._original_stderr = None
 
+        # per-run trace logger (created when run_folder is available)
+        self._tracer: Optional[RunTracer] = None
+        self._run_folder: Optional[RunFolder] = None
+
     async def run(
         self,
         event_stream: AsyncIterator[Tuple[str, Dict[str, Any]]],
         research_goal: Optional[str] = None,
+        run_folder: Optional[RunFolder] = None,
     ) -> Dict[str, Any]:
         """
         Run the reporter on a streaming event source.
@@ -147,6 +154,7 @@ class ConsoleReporter:
         Args:
             event_stream: Async iterator yielding (node_name, state) tuples
             research_goal: Optional research goal to display in header
+            run_folder: Optional RunFolder for saving results and trace (auto-detected from state if None)
 
         Returns:
             Final state dictionary with results
@@ -155,6 +163,8 @@ class ConsoleReporter:
         if self.filter_stderr:
             self._original_stderr = sys.stderr
             sys.stderr = FilteredStderr(self._original_stderr)
+
+        self._run_folder = run_folder
 
         try:
             start_time = time.time()
@@ -177,21 +187,80 @@ class ConsoleReporter:
             # process streaming events
             async for node_name, state in event_stream:
                 last_state = state
+                self._ensure_tracer(state, research_goal)
+                if self._tracer:
+                    self._tracer.log_node_start(node_name)
                 await self._handle_event(node_name, state)
+                if self._tracer:
+                    self._tracer.log_node_end(node_name, state)
 
             # show final summary
             execution_time = time.time() - start_time
             self._show_final_summary(last_state, execution_time)
+
+            # save run outputs (results + literature + trace)
+            self._save_run_outputs(last_state, execution_time)
 
             # give time for connections to close gracefully
             await asyncio.sleep(0.5)
 
             return last_state
 
+        except Exception as e:
+            if self._run_folder:
+                self._run_folder.mark_failed(str(e))
+            if self._tracer:
+                self._tracer.log_event(f"FATAL ERROR: {e}")
+                self._tracer.finalize(time.time() - start_time)
+            raise
+
         finally:
             # restore original stderr
             if self.filter_stderr and self._original_stderr:
                 sys.stderr = self._original_stderr
+
+    def _ensure_tracer(self, state: Dict[str, Any], research_goal: Optional[str]):
+        """Lazily create tracer once we know the run_dir from the first streamed state."""
+        if self._tracer is not None:
+            return
+        run_dir = state.get("run_dir")
+        if not run_dir:
+            return
+        trace_path = Path(run_dir) / "research_trace.log"
+        self._tracer = RunTracer(trace_path, research_goal or state.get("research_goal", ""))
+
+    def _save_run_outputs(self, last_state: Optional[Dict[str, Any]], execution_time: float):
+        """Save all run outputs: results, literature, and finalize trace."""
+        if not last_state:
+            return
+
+        run_dir = last_state.get("run_dir")
+        if not run_dir:
+            return
+
+        if not self._run_folder:
+            self._run_folder = RunFolder.from_existing(run_dir)
+
+        try:
+            self._run_folder.save_results(last_state, execution_time)
+            self._run_folder.save_literature(last_state)
+            run_dir_str = str(self._run_folder.run_dir)
+            self.console.print()
+            self.console.print(
+                Panel(
+                    f"[bold]Run folder:[/bold] {run_dir_str}\n"
+                    f"  results/summary.json + hypothesis_*.md\n"
+                    f"  literature/references.json + papers/\n"
+                    f"  research_trace.log",
+                    title="[green]Run Output Saved[/green]",
+                    border_style="green",
+                )
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to save run output: {e}")
+
+        if self._tracer:
+            self._tracer.finalize(execution_time)
 
     async def _handle_event(self, node_name: str, state: Dict[str, Any]):
         """Handle a single workflow event."""

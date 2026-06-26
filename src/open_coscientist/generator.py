@@ -27,6 +27,7 @@ from .nodes.meta_review import meta_review_node
 from .nodes.evolve import evolve_node
 from .nodes.proximity import proximity_node
 from .nodes.supervisor import supervisor_node
+from .run_output import RunFolder
 from .state import WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class HypothesisGenerator:
 
     Example:
         >>> generator = HypothesisGenerator(
-        ...     model_name="gemini/gemini-2.5-flash",
+        ...     model_name="gemini/gemini-3-flash",
         ...     max_iterations=1,
         ...     initial_hypotheses_count=5,
         ...     evolution_max_count=3
@@ -51,7 +52,7 @@ class HypothesisGenerator:
 
     def __init__(
         self,
-        model_name: str = "gemini/gemini-2.5-flash",
+        model_name: str = "gemini/gemini-3-flash",
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         initial_hypotheses_count: int = DEFAULT_INITIAL_HYPOTHESES_COUNT,
         evolution_max_count: int = DEFAULT_EVOLUTION_MAX_COUNT,
@@ -107,6 +108,14 @@ class HypothesisGenerator:
         # Cache availability checks per instance (lazy init on first generate call)
         self._mcp_available: Optional[bool] = None
         self._pubmed_available: Optional[bool] = None
+
+        # Per-run output folder (set during generation, accessible after)
+        self._current_run_folder: Optional[RunFolder] = None
+
+    @property
+    def current_run_folder(self) -> Optional[RunFolder]:
+        """Access the current (or most recent) run's output folder."""
+        return self._current_run_folder
 
     def _build_graph(self, enable_literature_review_node: bool = True) -> StateGraph:
         """
@@ -328,6 +337,20 @@ class HypothesisGenerator:
                 enable_literature_review_node=enable_literature_review_node
             )
 
+        # Create per-run output folder
+        run_config = {
+            "model_name": self.model_name,
+            "max_iterations": self.max_iterations,
+            "initial_hypotheses_count": self.initial_hypotheses_count,
+            "evolution_max_count": self.evolution_max_count,
+            "enable_literature_review_node": enable_literature_review_node,
+            "enable_tool_calling_generation": enable_tool_calling_generation,
+            "mcp_available": mcp_available,
+            "pubmed_available": pubmed_available,
+        }
+        self._current_run_folder = RunFolder(run_id, research_goal, run_config)
+        logger.info(f"Run output folder: {self._current_run_folder.run_dir}")
+
         # Initialize state
         initial_state: WorkflowState = {
             "research_goal": research_goal,
@@ -354,6 +377,8 @@ class HypothesisGenerator:
             "dev_test_lit_tools_isolation": dev_test_lit_tools_isolation,
             # tool registry for config-driven tool selection
             "tool_registry": self._tool_registry,
+            # per-run output folder path
+            "run_dir": str(self._current_run_folder.run_dir),
             # Optional user preferences and inputs
             "preferences": opts.get("preferences"),
             "attributes": opts.get("attributes"),
@@ -475,7 +500,7 @@ class HypothesisGenerator:
             # Format result to match expected interface
             execution_time = time.time() - start_time
 
-            return {
+            result = {
                 "hypotheses": [h.to_dict() for h in final_state["hypotheses"]],
                 "meta_review": final_state.get("meta_review", {}),
                 "research_plan": final_state.get("supervisor_guidance", {}),
@@ -492,10 +517,25 @@ class HypothesisGenerator:
                     "phase_times": final_state["metrics"].phase_times,
                     "llm_calls": final_state["metrics"].llm_calls,
                 },
+                "run_id": run_id,
+                "articles": [a.to_dict() for a in (final_state.get("articles") or [])],
+                "articles_with_reasoning": final_state.get("articles_with_reasoning"),
             }
+
+            if self._current_run_folder:
+                try:
+                    self._current_run_folder.save_results(result, execution_time)
+                    self._current_run_folder.save_literature(result)
+                    logger.info(f"Run output saved to {self._current_run_folder.run_dir}")
+                except Exception as save_err:
+                    logger.warning(f"Failed to save run output: {save_err}")
+
+            return result
 
         except Exception as e:
             logger.error(f"Hypothesis generation failed: {e}", exc_info=True)
+            if self._current_run_folder:
+                self._current_run_folder.mark_failed(str(e))
             raise
 
     async def _generate_hypotheses_with_streaming(
@@ -553,6 +593,8 @@ class HypothesisGenerator:
                 "literature_review_queries": [],
                 "articles": [],
                 "debate_transcripts": None,
+                "run_id": initial_state["run_id"],
+                "run_dir": initial_state.get("run_dir", ""),
             }
 
             # Stream the workflow execution
@@ -644,6 +686,8 @@ class HypothesisGenerator:
                         "literature_review_queries": cumulative_state["literature_review_queries"],
                         "articles": [a.to_dict() for a in cumulative_state["articles"]],
                         "debate_transcripts": cumulative_state["debate_transcripts"],
+                        "run_id": cumulative_state["run_id"],
+                        "run_dir": cumulative_state["run_dir"],
                         "metrics": {
                             "hypothesis_count": cumulative_state["metrics"].hypothesis_count,
                             "reviews_count": cumulative_state["metrics"].reviews_count,

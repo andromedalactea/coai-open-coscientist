@@ -43,7 +43,7 @@ cp .env.example .env
 ```
 
 Required keys:
-- `GEMINI_API_KEY` - for LLM calls- gemini/gemini-2.5-flash hardcoded on these by default (can be customized)
+- `GEMINI_API_KEY` - for LLM calls- gemini/gemini-3-flash hardcoded on these by default (can be customized)
 - `MCP_SERVER_URL` - URL to your MCP server (default: http://localhost:8888/mcp)
 Can't run the literature review node script if an MCP with the url/pdf reading tools is not available.
 For now you'll have to see the source code to check what tools are expected or the LLM prompts used,
@@ -66,7 +66,7 @@ The MCP server provides tools for literature search (Google Scholar, PubMed, etc
 
 ## Tips
 
-- Use cheap models (gemini-2.5-flash) for quick tests
+- Use cheap models (gemini-3-flash) for quick tests
 - These scripts use real LLM calls - check your API keys
 - Logs are saved to logs/ directory with timestamps*
 

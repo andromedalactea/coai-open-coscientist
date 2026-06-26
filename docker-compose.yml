@@ -4,20 +4,40 @@ services:
   mcp-server:
     build:
       context: .
-      dockerfile: mcp_server/Dockerfile
+      dockerfile: mcps/mcp_server/Dockerfile
     ports:
       - "8888:8888"
     env_file:
-      - mcp_server/.env
+      - mcps/mcp_server/.env
     environment:
       # override or set additional environment variables
       - COSCIENTIST_MCP_PORT=8888
     volumes:
       # persist paper cache
-      - ./mcp_server/paper_cache:/app/mcp_server/paper_cache
+      - ./mcps/mcp_server/paper_cache:/app/mcp_server/paper_cache
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8888/health', timeout=5.0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  mcp-server-academic:
+    build:
+      context: .
+      dockerfile: mcps/mcp_server_academic/Dockerfile
+    ports:
+      - "8889:8889"
+    env_file:
+      - mcps/mcp_server_academic/.env
+    environment:
+      - COSCIENTIST_ACADEMIC_MCP_PORT=8889
+    volumes:
+      - ./mcps/mcp_server_academic/cache:/app/mcp_server_academic/cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8889', timeout=5.0)"]
       interval: 30s
       timeout: 10s
       retries: 3

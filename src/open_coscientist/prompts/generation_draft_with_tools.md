@@ -106,7 +106,8 @@ The literature review node already analyzed papers and identified key themes. Us
       "explanation": "Step-by-step layman explanation (4-6 sentences)",
       "gap_reasoning": "Brief explanation of what gap in the literature this hypothesis addresses and why it seems promising",
       "literature_sources": "Bracketed citation keys from the reference list that informed this gap. Example: 'Gap identified via retinal imaging [P1] and mechanistic data [KG1].'",
-      "experiment": "Concrete experiment design with models, datasets, metrics, and validation criteria (4-6 sentences)"
+      "experiment": "Concrete experiment design with models, datasets, metrics, and validation criteria (4-6 sentences)",
+      "literature_implementation_details": "Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers."
     }
   ]
 }
@@ -118,6 +119,7 @@ The literature review node already analyzed papers and identified key themes. Us
 - `gap_reasoning`: What research gap this addresses and why it's promising
 - `literature_sources`: **CRITICAL - Use ONLY `[C*]` keys from the Citation Reference List (if provided). Do NOT invent author-year citations.**
 - `experiment`: Concrete, actionable experiment design to test the hypothesis
+- `literature_implementation_details`: Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.
 
 **Text formatting guidelines:**
 - Use standard scientific notation and symbols (Greek letters like τ, β, α, mathematical operators like ≥, ≤, ±)

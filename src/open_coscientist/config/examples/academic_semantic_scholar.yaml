@@ -1,0 +1,169 @@
+# Academic Literature MCP Server Tool Configuration
+# (Semantic Scholar + arXiv + Unpaywall)
+#
+# This file configures the academic literature MCP server as a drop-in
+# replacement for the PubMed MCP. It uses Semantic Scholar for paper
+# discovery, AI-based reranking, and arXiv/Unpaywall for content download.
+#
+# To use this configuration, copy it to ~/.coscientist/tools.yaml or
+# set it as the project's tools.yaml.
+#
+# Environment variables can be used with ${VAR} or ${VAR:-default} syntax.
+
+version: "1.0"
+
+# MCP Server Definitions
+servers:
+  academic_server:
+    url: "${ACADEMIC_MCP_SERVER_URL:-http://localhost:8890/mcp}"
+    transport: "streamable_http"
+    enabled: true
+
+# Tool Definitions
+tools:
+  search_tools:
+    # Semantic Scholar metadata search (used in draft phase)
+    academic_search:
+      server: "academic_server"
+      mcp_tool_name: "search_academic"
+      display_name: "Academic Search"
+      description: "Search Semantic Scholar for academic papers and return metadata (title, abstract, authors, DOI)"
+      category: "search"
+      source_type: "academic"
+      enabled: true
+
+      response_format:
+        type: "json"
+        results_path: "results"
+        is_dict: false
+        field_mapping:
+          title: "title"
+          url: "url"
+          authors: "authors"
+          year: "year"
+          abstract: "abstract"
+          source_id: "source_id"
+          source: "'semantic_scholar'"
+          venue: "venue"
+          citations: "citations"
+
+      prompt_snippet: |
+        Use `search_academic` to search Semantic Scholar and get paper metadata.
+        - Returns metadata only (abstracts), no fulltext downloads
+        - Supports natural language queries
+        - Example: search_academic(query="galaxy formation dark matter simulations", max_papers=5)
+
+      parameters:
+        query:
+          type: "string"
+          required: true
+          description: "Search query (natural language or keywords)"
+        max_papers:
+          type: "integer"
+          default: 10
+          description: "Maximum number of papers to return"
+
+    # Academic fulltext search (used in literature review and validation)
+    academic_fulltext:
+      server: "academic_server"
+      mcp_tool_name: "academic_search_with_fulltext"
+      display_name: "Academic Fulltext Search"
+      description: "Search Semantic Scholar, AI-rerank results, and download fulltexts from arXiv/Unpaywall"
+      category: "search_with_content"
+      source_type: "academic"
+      enabled: true
+
+      response_format:
+        type: "json"
+        results_path: "."
+        is_dict: true
+        field_mapping:
+          title: "title"
+          url: "@url_from_key"
+          authors: "authors"
+          year: "year"
+          abstract: "abstract"
+          content: "fulltext"
+          source_id: "@key"
+          source: "'semantic_scholar'"
+          venue: "publication"
+          doi: "doi"
+          arxiv_id: "arxiv_id"
+
+      # 1:1 mapping — same canonical parameter names as PubMed
+      parameter_mapping:
+        query: "query"
+        slug: "slug"
+        max_papers: "max_papers"
+        recency_years: "recency_years"
+        run_id: "run_id"
+
+      prompt_snippet: |
+        Use `academic_search_with_fulltext` to search Semantic Scholar AND download fulltexts.
+        - Downloads full paper content from arXiv (LaTeX source preferred) or Unpaywall PDF
+        - AI reranks papers for relevance before downloading
+        - Use for comprehensive literature analysis
+        - Example: academic_search_with_fulltext(query="...", slug="research_abc", max_papers=5)
+
+      parameters:
+        query:
+          type: "string"
+          required: true
+          description: "Search query (natural language or keywords)"
+        slug:
+          type: "string"
+          required: true
+          description: "Unique identifier for this research corpus"
+        max_papers:
+          type: "integer"
+          default: 10
+          description: "Maximum number of papers to return"
+        recency_years:
+          type: "integer"
+          default: 0
+          description: "Filter to papers from last N years (0 = no filter)"
+        run_id:
+          type: "string"
+          required: false
+          description: "Optional run ID for tracking"
+
+  utility_tools:
+    # Academic search availability check
+    check_academic:
+      server: "academic_server"
+      mcp_tool_name: "check_academic_available"
+      display_name: "Check Academic Search Availability"
+      description: "Check if the academic search pipeline (Semantic Scholar) is accessible"
+      category: "utility"
+      enabled: true
+
+      response_format:
+        type: "boolean_string"
+
+# Workflow Configurations
+workflows:
+  # Literature review phase — comprehensive paper analysis
+  literature_review:
+    primary_search: "academic_fulltext"
+    fallback_search: "academic_search"
+    availability_check: "check_academic"
+
+  # Draft generation phase — quick metadata searches for ideation
+  draft_generation:
+    search_tools:
+      - "academic_search"
+
+  # Validation phase — fulltext searches for novelty checking
+  validation:
+    search_tools:
+      - "academic_fulltext"
+
+  # Reflection phase — no INDRA/KG tools for academic search
+  # Declared to suppress "workflow not found" warnings; context_enrichment_tools stays empty.
+  reflection: {}
+
+# Global Settings
+settings:
+  auto_discover: true
+  merge_strategy: "replace"
+  allow_disable_builtins: true

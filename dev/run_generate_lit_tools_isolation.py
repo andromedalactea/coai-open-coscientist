@@ -16,6 +16,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.markdown import Markdown
+from dotenv import load_dotenv
+load_dotenv()
 
 from state_helpers import make_supervisor_state
 from open_coscientist.nodes.literature_review import literature_review_node
@@ -43,7 +45,7 @@ async def test_lit_tools_isolation(research_goal: str, model_name: str, hypothes
 
     # create base state with supervisor
     console.print("[yellow]preparing state (running supervisor first)...[/yellow]")
-    state = make_supervisor_state(research_goal=research_goal, model_name=model_name)
+    state = await make_supervisor_state(research_goal=research_goal, model_name=model_name)
     state["initial_hypotheses_count"] = hypotheses_count
 
     # enable lit tools generation
@@ -148,7 +150,7 @@ if __name__ == "__main__":
         research_goal = sys.argv[1]
 
     # parse optional flags
-    model_name = "gemini/gemini-2.5-flash"
+    model_name = os.getenv("HYPOTHESIS_GENERATION_MODEL", os.getenv("DEFAULT_MODEL", "gemini/gemini-3-flash"))
     hypotheses_count = 3
 
     for i, arg in enumerate(sys.argv):

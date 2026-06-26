@@ -38,17 +38,18 @@ Consider current scientific literature and knowledge in the domain.
 
 ## Each Hypothesis Should:
 
-1. Follow the format: "We want to develop [X] to enable [Y]"
-   - X = A specific technique, method, algorithm, or system
-   - Y = A practically useful capability or outcome (e.g., improved reliability, safety, interpretability, robustness)
+1. Follow the format: "We hypothesize that [X] results in [Y]" or "We hypothesize that [X] can be detected by observing [Y]"
+   - X = A specific biological, physical, or chemical phenomenon, structure, or process.
+   - Y = A measurable signal, observable anomaly, or specific empirical outcome that can be validated with existing data or models.
 2. Be concise and action-oriented (2-3 sentences maximum)
-3. Focus on practical utility and real-world applications
+3. Focus on practical scientific testability with existing data sources, MCPs, and professional scientific libraries. You are NOT proposing to build a new software tool or framework; you are proposing a scientific statement about nature that can be tested using existing computational tools.
 4. Challenge existing assumptions or extend current knowledge based on the literature
-5. Be formulated as something that can be developed and tested
+5. Be formulated as something that can be empirically tested
 6. Explore a UNIQUE approach compared to the other hypotheses you generate. First debate turn would generate 3 (with a mix of the user-provided hypotheses, when provided), keeping in mind each one of them should be unique; this also applies when iterating hypotheses on subsequent debate turns, and when deciding which one to keep, which to discard, and which to select if there are still more than 1 hypotheses in the final turn.
+7. Include specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.
 
 Example structure:
-"We want to develop [a causal intervention technique for attention heads] to enable [real-time debugging of reasoning errors in deployed language models]."
+"We hypothesize that [civilizations with high ultraviolet radiation exposure develop naturally photoprotective pigments] that [can be detected as an anomalous fluorescence emission band at 750-780 nm in disk-integrated spectra]."
 
 ## Task
 

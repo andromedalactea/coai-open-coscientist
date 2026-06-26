@@ -282,9 +282,10 @@ def get_generation_prompt(
                     focus_areas = ", ".join(focus_areas)
                 guidance_sections.append(f"**Focus Areas:** {focus_areas}\n")
             if generation_phase.get("diversity_targets"):
-                guidance_sections.append(
-                    f"**Diversity Targets:** {generation_phase['diversity_targets']}\n"
-                )
+                dt = generation_phase["diversity_targets"]
+                if isinstance(dt, list):
+                    dt = "\n".join(f"- {item}" for item in dt)
+                guidance_sections.append(f"**Diversity Targets:** {dt}\n")
             if generation_phase.get("quantity_target"):
                 guidance_sections.append(
                     f"**Quantity Target:** {generation_phase['quantity_target']}\n"

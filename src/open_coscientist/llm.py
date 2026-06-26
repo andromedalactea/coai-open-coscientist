@@ -17,14 +17,102 @@ from jsonschema.exceptions import ValidationError
 import litellm
 
 from .cache import get_cache
+from .constants import DEEPSEEK_MAX_OUTPUT_TOKENS, LARGE_CONTEXT_MODEL
 
 logger = logging.getLogger(__name__)
+
+_deepseek_max_tokens_warned = False  # log the clamp warning only once
 
 
 # suppress Pydantic serialization warnings from LiteLLM globally
 # these occur when LiteLLM response objects (Pydantic models) are serialized
 # and have mismatched field counts between streaming/non-streaming responses
 warnings.filterwarnings("ignore", message=r".*Pydantic serializer warnings.*", category=UserWarning)
+
+
+def _is_deepseek_model(model_name: str) -> bool:
+    """Check if a model name refers to a DeepSeek model."""
+    return "deepseek" in model_name.lower()
+
+
+def _is_context_window_error(exc: Exception) -> bool:
+    """Return True if the exception signals a context-window / token-limit overflow.
+
+    Covers litellm.ContextWindowExceededError and the generic
+    litellm.BadRequestError whose message contains context-window-related keywords.
+    """
+    exc_type = type(exc).__name__
+    if "ContextWindowExceeded" in exc_type:
+        return True
+    exc_str = str(exc).lower()
+    return (
+        "context" in exc_str
+        and ("exceed" in exc_str or "length" in exc_str or "maximum" in exc_str)
+    )
+
+
+def _build_deepseek_json_prompt_suffix(json_schema: Dict[str, Any]) -> str:
+    """
+    Build a prompt suffix that instructs DeepSeek to output JSON matching a schema.
+
+    DeepSeek does not support the `json_schema` response_format. Instead, we
+    inject the schema description into the prompt and use `json_object` mode.
+    Per DeepSeek docs, the prompt MUST contain the word "json".
+
+    Args:
+        json_schema: The JSON schema dict (may have a nested "schema" key).
+
+    Returns:
+        A prompt suffix string describing the expected JSON structure.
+    """
+    actual_schema = json_schema.get("schema", json_schema)
+    schema_name = json_schema.get("name", "response")
+
+    def _describe_properties(props: Dict[str, Any], required: list = None) -> str:
+        """Recursively describe schema properties for prompt injection."""
+        if required is None:
+            required = []
+        lines = []
+        for key, prop in props.items():
+            prop_type = prop.get("type", "string")
+            desc = prop.get("description", "")
+            is_required = key in required
+            req_marker = " (required)" if is_required else " (optional)"
+
+            if prop_type == "object" and "properties" in prop:
+                nested = _describe_properties(
+                    prop["properties"], prop.get("required", [])
+                )
+                lines.append(f'  "{key}": {{  // object{req_marker}{" - " + desc if desc else ""}\n{nested}\n  }}')
+            elif prop_type == "array":
+                item_type = prop.get("items", {}).get("type", "string")
+                if item_type == "object" and "properties" in prop.get("items", {}):
+                    nested = _describe_properties(
+                        prop["items"]["properties"],
+                        prop["items"].get("required", []),
+                    )
+                    lines.append(f'  "{key}": [  // array of objects{req_marker}{" - " + desc if desc else ""}\n    {{\n{nested}\n    }}\n  ]')
+                else:
+                    lines.append(f'  "{key}": []  // array of {item_type}{req_marker}{" - " + desc if desc else ""}')
+            elif "enum" in prop:
+                enum_vals = ", ".join(f'"{v}"' for v in prop["enum"])
+                lines.append(f'  "{key}": "..."  // {prop_type}, one of [{enum_vals}]{req_marker}{" - " + desc if desc else ""}')
+            else:
+                lines.append(f'  "{key}": "..."  // {prop_type}{req_marker}{" - " + desc if desc else ""}')
+        return "\n".join(lines)
+
+    properties = actual_schema.get("properties", {})
+    required_fields = actual_schema.get("required", [])
+    structure = _describe_properties(properties, required_fields)
+
+    return (
+        f"\n\n--- REQUIRED JSON OUTPUT FORMAT ---\n"
+        f"You MUST respond with valid JSON matching the \"{schema_name}\" schema below.\n"
+        f"Output ONLY the JSON object, no markdown fences, no extra text.\n"
+        f"IMPORTANT: Keep all string values concise (1-3 sentences each) to fit within token limits.\n\n"
+        f"Expected JSON structure:\n{{\n{structure}\n}}\n"
+        f"--- END FORMAT ---"
+    )
 
 
 def attempt_json_repair(
@@ -223,7 +311,7 @@ def get_fallback_response(json_schema: Optional[Dict[str, Any]]) -> Optional[Dic
 async def call_llm(
     prompt: str,
     model_name: str,
-    max_tokens: int = 4000,
+    max_tokens: int = 25000,
     temperature: float = 0.7,
     force_json: bool = False,
     json_schema: Optional[Dict[str, Any]] = None,
@@ -233,7 +321,7 @@ async def call_llm(
 
     Args:
         prompt: The prompt to send to the LLM
-        model_name: Model name in litellm format (e.g., "gpt-4o-mini", "gemini/gemini-2.5-flash")
+        model_name: Model name in litellm format (e.g., "gpt-4o-mini", "gemini/gemini-3-flash")
         max_tokens: Maximum tokens in response
         temperature: Sampling temperature
         force_json: If True, try to force JSON mode (model support varies)
@@ -253,6 +341,18 @@ async def call_llm(
             f"clamping temperature {original_temp} -> 1.0 for gemini 3 model "
             f"(gemini 3 requires temp >= 1.0 to avoid degraded performance)"
         )
+
+    # clamp max_tokens for deepseek models (API limit is 8192 for deepseek-chat)
+    global _deepseek_max_tokens_warned
+    if _is_deepseek_model(model_name) and max_tokens > DEEPSEEK_MAX_OUTPUT_TOKENS:
+        original_max_tokens = max_tokens
+        max_tokens = DEEPSEEK_MAX_OUTPUT_TOKENS
+        if not _deepseek_max_tokens_warned:
+            logger.warning(
+                f"clamping max_tokens {original_max_tokens} -> {DEEPSEEK_MAX_OUTPUT_TOKENS} for DeepSeek model "
+                f"(DeepSeek API limit; set DEEPSEEK_MAX_OUTPUT_TOKENS env var to adjust)"
+            )
+            _deepseek_max_tokens_warned = True
 
     # Check cache first
     cache = get_cache()
@@ -276,27 +376,48 @@ async def call_llm(
         }
 
         # Try to add response_format based on schema or force_json
-        if json_schema:
-            try:
-                completion_args["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": json_schema,
-                }
-            except Exception as e:
-                # Some models/providers don't support json_schema, fall back to json_object
-                logger.warning(f"JSON schema not supported, falling back to json_object: {e}")
-                try:
-                    completion_args["response_format"] = {"type": "json_object"}
-                except Exception:
-                    # Some models/providers don't support this either, silently continue
-                    pass
-        elif force_json:
-            try:
-                completion_args["response_format"] = {"type": "json_object"}
-            except Exception:
-                # Some models/providers don't support this, silently continue
-                pass
+        is_deepseek = _is_deepseek_model(model_name)
 
+        if json_schema:
+            if is_deepseek:
+                # DeepSeek only supports json_object mode, not json_schema.
+                # Inject schema description into the prompt instead.
+                completion_args["response_format"] = {"type": "json_object"}
+                schema_suffix = _build_deepseek_json_prompt_suffix(json_schema)
+                completion_args["messages"][0]["content"] += schema_suffix
+                logger.debug(
+                    "DeepSeek model detected: using json_object mode "
+                    "with schema injected into prompt"
+                )
+            else:
+                try:
+                    completion_args["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": json_schema,
+                    }
+                except Exception as e:
+                    # Some models/providers don't support json_schema, fall back
+                    logger.warning(
+                        f"JSON schema not supported, falling back to json_object: {e}"
+                    )
+                    try:
+                        completion_args["response_format"] = {"type": "json_object"}
+                    except Exception:
+                        pass
+        elif force_json:
+            completion_args["response_format"] = {"type": "json_object"}
+            if is_deepseek:
+                # DeepSeek requires the word "json" in the prompt for json_object mode
+                msg_content = completion_args["messages"][0]["content"]
+                if "json" not in msg_content.lower():
+                    completion_args["messages"][0]["content"] += (
+                        "\n\nRespond with valid JSON output only."
+                    )
+                    logger.debug(
+                        "DeepSeek model detected: added 'json' keyword to prompt"
+                    )
+
+        logger.info(f"Executing LLM call to model: {model_name}")
         response = await litellm.acompletion(**completion_args)
 
         content = response.choices[0].message.content
@@ -321,13 +442,27 @@ async def call_llm(
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         logger.error(f"Model: {model_name}, max_tokens: {max_tokens}")
+        # --- large-context fallback ---
+        if _is_context_window_error(e) and model_name != LARGE_CONTEXT_MODEL:
+            logger.warning(
+                f"Context window exceeded for model '{model_name}'. "
+                f"Retrying with large-context fallback model '{LARGE_CONTEXT_MODEL}'."
+            )
+            return await call_llm(
+                prompt=prompt,
+                model_name=LARGE_CONTEXT_MODEL,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                force_json=force_json,
+                json_schema=json_schema,
+            )
         raise
 
 
 async def call_llm_json(
     prompt: str,
     model_name: str,
-    max_tokens: int = 4000,
+    max_tokens: int = 25000,
     temperature: float = 0.7,
     json_schema: Optional[Dict[str, Any]] = None,
     max_attempts: int = 5,
@@ -588,7 +723,7 @@ async def call_llm_with_tools(
     model_name: str,
     tools: List[Dict[str, Any]],
     tool_executor: Callable,
-    max_tokens: int = 8000,
+    max_tokens: int = 25000,
     temperature: float = 0.7,
     max_iterations: int = 10,
 ) -> tuple[str, List[Dict[str, Any]]]:
@@ -622,6 +757,18 @@ async def call_llm_with_tools(
             f"(gemini 3 requires temp >= 1.0 to avoid degraded performance)"
         )
 
+    # clamp max_tokens for deepseek models (API limit is 8192 for deepseek-chat)
+    global _deepseek_max_tokens_warned
+    if _is_deepseek_model(model_name) and max_tokens > DEEPSEEK_MAX_OUTPUT_TOKENS:
+        original_max_tokens = max_tokens
+        max_tokens = DEEPSEEK_MAX_OUTPUT_TOKENS
+        if not _deepseek_max_tokens_warned:
+            logger.warning(
+                f"clamping max_tokens {original_max_tokens} -> {DEEPSEEK_MAX_OUTPUT_TOKENS} for DeepSeek model "
+                f"(DeepSeek API limit; set DEEPSEEK_MAX_OUTPUT_TOKENS env var to adjust)"
+            )
+            _deepseek_max_tokens_warned = True
+
     # Check cache first
     cache = get_cache()
     cached_response = cache.get(prompt, model_name, temperature, max_tokens, tools=tools)
@@ -638,6 +785,7 @@ async def call_llm_with_tools(
 
         try:
             # Call LLM with tools
+            logger.info(f"Executing LLM tool call to model: {model_name}")
             response = await litellm.acompletion(
                 model=model_name,
                 messages=messages,
@@ -710,6 +858,22 @@ async def call_llm_with_tools(
 
         except Exception as e:
             logger.error(f"Error in LLM tool call loop (iteration {iteration + 1}): {e}")
+            # --- large-context fallback ---
+            if _is_context_window_error(e) and model_name != LARGE_CONTEXT_MODEL:
+                logger.warning(
+                    f"Context window exceeded for model '{model_name}' on iteration "
+                    f"{iteration + 1}. Restarting entire tool call loop with "
+                    f"large-context fallback model '{LARGE_CONTEXT_MODEL}'."
+                )
+                return await call_llm_with_tools(
+                    prompt=prompt,
+                    model_name=LARGE_CONTEXT_MODEL,
+                    tools=tools,
+                    tool_executor=tool_executor,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    max_iterations=max_iterations,
+                )
             raise
 
     # Max iterations reached

@@ -18,7 +18,7 @@ from open_coscientist.nodes.generate import generate_node
 console = Console()
 
 RESEARCH_GOAL = "How can we detect Alzheimer's disease earlier using retinal imaging?"
-MODEL_NAME = "gemini/gemini-2.5-flash"
+MODEL_NAME = "gemini/gemini-3-flash"
 
 
 async def test_generate(with_literature: bool = False):

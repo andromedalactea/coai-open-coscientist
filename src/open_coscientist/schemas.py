@@ -36,8 +36,12 @@ GENERATION_SCHEMA: Dict[str, Any] = {
                             "type": "string",
                             "description": "Concrete experiment design with models, datasets, metrics, and validation criteria (4-6 sentences)",
                         },
+                        "literature_implementation_details": {
+                            "type": "string",
+                            "description": "Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.",
+                        },
                     },
-                    "required": ["hypothesis", "explanation", "literature_grounding", "experiment"],
+                    "required": ["hypothesis", "explanation", "literature_grounding", "experiment", "literature_implementation_details"],
                     "additionalProperties": False,
                 },
             }
@@ -79,6 +83,10 @@ GENERATION_DRAFT_SCHEMA: Dict[str, Any] = {
                             "type": "string",
                             "description": "Sources from the reference list that informed this gap. Use ONLY the bracketed [C*] keys provided (e.g. [C1], [C2], [C3]). Example: 'Gap identified via retinal imaging findings [C1] and tau isoform research [C2][C3].'",
                         },
+                        "literature_implementation_details": {
+                            "type": "string",
+                            "description": "Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.",
+                        },
                     },
                     "required": [
                         "hypothesis",
@@ -86,6 +94,7 @@ GENERATION_DRAFT_SCHEMA: Dict[str, Any] = {
                         "gap_reasoning",
                         "literature_sources",
                         "experiment",
+                        "literature_implementation_details",
                     ],
                     "additionalProperties": False,
                 },
@@ -136,6 +145,10 @@ HYPOTHESIS_VALIDATION_SYNTHESIS_SCHEMA: Dict[str, Any] = {
                             "required": ["decision"],
                             "additionalProperties": False,
                         },
+                        "literature_implementation_details": {
+                            "type": "string",
+                            "description": "Specific methodological details, equations, libraries, parameters, or data sources extracted from the cited literature that are necessary for computational verification. Explain exactly how this is implemented in previous papers.",
+                        },
                     },
                     "required": [
                         "hypothesis",
@@ -143,6 +156,7 @@ HYPOTHESIS_VALIDATION_SYNTHESIS_SCHEMA: Dict[str, Any] = {
                         "literature_grounding",
                         "experiment",
                         "novelty_validation",
+                        "literature_implementation_details",
                     ],
                     "additionalProperties": False,
                 },
@@ -419,7 +433,6 @@ EVOLUTION_SCHEMA: Dict[str, Any] = {
             "experiment",
             "refinement_summary",
         ],
-        "additionalProperties": False,
     },
 }
 
@@ -546,7 +559,6 @@ RANKING_SCHEMA: Dict[str, Any] = {
             "hypothesis_a",
             "hypothesis_b",
             "winner",
-            "judgment_explanation",
             "decision_summary",
             "confidence_level",
         ],
@@ -670,11 +682,21 @@ SUPERVISOR_SCHEMA: Dict[str, Any] = {
                         "properties": {
                             "focus_areas": {"type": "array", "items": {"type": "string"}},
                             "diversity_targets": {
-                                "type": "string",
-                                "description": "description of diversity targets for hypotheses",
+                                "oneOf": [
+                                    {"type": "string"},
+                                    {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": "list of diversity dimensions (e.g., vary chemical species, measurement modalities)",
+                                    },
+                                ],
+                                "description": "how hypotheses should differ (vary across what dimensions?)",
                             },
                             "quantity_target": {
-                                "type": "string",
+                                "oneOf": [
+                                    {"type": "string"},
+                                    {"type": "integer"},
+                                ],
                                 "description": "target number of hypotheses",
                             },
                         },
@@ -890,7 +912,6 @@ LITERATURE_PAPER_ANALYSIS_SCHEMA: Dict[str, Any] = {
             "unexplored_areas",
             "relevance",
         ],
-        "additionalProperties": False,
     },
 }
 

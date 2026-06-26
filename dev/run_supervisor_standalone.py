@@ -25,7 +25,7 @@ async def test_supervisor():
     # Create minimal state
     state = make_base_state(
         research_goal="How can we detect Alzheimer's disease earlier using retinal imaging?",
-        model_name="gemini/gemini-2.5-flash",
+        model_name="gemini/gemini-3-flash",
     )
 
     console.print(f"[yellow]Research goal:[/yellow] {state['research_goal']}\n")

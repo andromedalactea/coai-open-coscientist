@@ -16,13 +16,13 @@ Instructions:
 
 ## Each Hypothesis Should:
 
-1. Follow the format: "We want to develop [X] to enable [Y]"
-   - X = A specific technique, method, algorithm, or system
-   - Y = A practically useful capability or outcome (e.g., improved reliability, safety, interpretability, robustness)
+1. Follow the format: "We hypothesize that [X] results in [Y]" or "We hypothesize that [X] can be detected by observing [Y]"
+   - X = A specific biological, physical, or chemical phenomenon, structure, or process.
+   - Y = A measurable signal, observable anomaly, or specific empirical outcome that can be validated with existing data or models.
 2. Be concise and action-oriented (2-3 sentences maximum)
-3. Focus on practical utility and real-world applications
+3. Focus on practical scientific testability with existing data sources, MCPs, and professional scientific libraries. You are NOT proposing to build a new software tool or framework; you are proposing a scientific statement about nature that can be tested using existing computational tools.
 4. Challenge existing assumptions or extend current knowledge based on your domain expertise
-5. Be formulated as something that can be developed and tested
+5. Be formulated as something that can be empirically tested
 6. Explore a UNIQUE approach compared to the other hypotheses you generate. First debate turn would generate 3, keeping in mind each one of them should be unique; this also applies when iterating hypotheses on subsequent debate turns, and when deciding which one to keep, which to discard, and which to select if there are still more than 1 hypotheses in the final turn.
 
 ## Procedure

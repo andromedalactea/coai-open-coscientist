@@ -173,7 +173,7 @@ See [MCP Integration](mcp-integration.md) documentation.
 from open_coscientist import HypothesisGenerator
 
 generator = HypothesisGenerator(
-    model_name="gemini/gemini-2.5-flash",
+    model_name="gemini/gemini-3-flash",
     max_iterations=1,
     initial_hypotheses_count=5
 )
@@ -190,7 +190,7 @@ result = await generator.generate_hypotheses(
 from open_coscientist import HypothesisGenerator
 
 generator = HypothesisGenerator(
-    model_name="gemini/gemini-2.5-flash",
+    model_name="gemini/gemini-3-flash",
     max_iterations=1,
     initial_hypotheses_count=5
 )
@@ -208,7 +208,7 @@ result = await generator.generate_hypotheses(
 from open_coscientist import HypothesisGenerator
 
 generator = HypothesisGenerator(
-    model_name="gemini/gemini-2.5-flash",
+    model_name="gemini/gemini-3-flash",
     max_iterations=1,
     initial_hypotheses_count=5
 )

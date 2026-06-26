@@ -8,7 +8,7 @@ Complete guide to configuring Open Coscientist for your needs.
 from open_coscientist import HypothesisGenerator
 
 generator = HypothesisGenerator(
-    model_name="gemini/gemini-2.5-flash",   # Default; Any LiteLLM-supported model
+    model_name="gemini/gemini-3-flash",   # Default; Any LiteLLM-supported model
     max_iterations=1,                       # Number of refinement cycles
     initial_hypotheses_count=5,             # Initial pool size
     evolution_max_count=3,                  # How many to evolve and keep
@@ -24,7 +24,7 @@ See constants.py for other defaults.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `model_name` | `"gemini/gemini-2.5-flash"` | LLM model in LiteLLM format (e.g., `"claude-sonnet-4-6"`, `"gpt-4o"`, `"gemini/gemini-2.5-flash"`) |
+| `model_name` | `"gemini/gemini-3-flash"` | LLM model in LiteLLM format (e.g., `"claude-sonnet-4-6"`, `"gpt-4o"`, `"gemini/gemini-3-flash"`) |
 | `max_iterations` | `1` | Number of refinement cycles (0 = no evolution/meta-review phase) |
 | `initial_hypotheses_count` | `5` | Initial hypothesis pool size |
 | `evolution_max_count` | `3` | Number of top hypotheses to evolve in each iteration |
@@ -63,7 +63,7 @@ generator = HypothesisGenerator(model_name="claude-sonnet-4-6")
 export GEMINI_API_KEY="your-key-here"
 
 # Use in code
-generator = HypothesisGenerator(model_name="gemini/gemini-2.5-flash")
+generator = HypothesisGenerator(model_name="gemini/gemini-3-flash")
 ```
 
 ### Azure, AWS Bedrock, Cohere
@@ -210,7 +210,7 @@ Modifying constants may affect result quality and should be done with careful ev
 
 ```python
 generator = HypothesisGenerator(
-    model_name="gemini/gemini-2.5-flash",   # Fast, cheap model
+    model_name="gemini/gemini-3-flash",   # Fast, cheap model
     max_iterations=1,                       # Not many iterations
     initial_hypotheses_count=3,             # Smaller pool
     enable_cache=True,                      # Reuse responses
@@ -232,7 +232,7 @@ generator = HypothesisGenerator(
 
 ```python
 generator = HypothesisGenerator(
-    model_name="gemini/gemini-2.5-flash",   # Cost-effective model
+    model_name="gemini/gemini-3-flash",   # Cost-effective model
     enable_cache=True,                      # Avoid redundant calls
     initial_hypotheses_count=5,             # Moderate pool size
 )

@@ -53,6 +53,7 @@ class Hypothesis:
     explanation: Optional[str] = None
     literature_grounding: Optional[str] = None
     experiment: Optional[str] = None
+    literature_implementation_details: Optional[str] = None
     novelty_validation: Optional[str] = None
     enrichments: Dict[str, Any] = field(default_factory=dict)
     citation_map: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -86,6 +87,7 @@ class Hypothesis:
             "explanation": self.explanation,
             "literature_grounding": self.literature_grounding,
             "experiment": self.experiment,
+            "literature_implementation_details": self.literature_implementation_details,
             # "literature_review_used": self.literature_review_used,
             "novelty_validation": self.novelty_validation,
             "enrichments": self.enrichments,

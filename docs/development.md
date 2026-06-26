@@ -201,7 +201,7 @@ from open_coscientist.llm import call_llm_json
 
 response = await call_llm_json(
     prompt="Your prompt",
-    model_name="gemini/gemini-2.5-flash",
+    model_name="gemini/gemini-3-flash",
     temperature=0.7,
     max_tokens=4000,
     json_schema=MySchema, # uses schema where possible to avoid brittleness
@@ -217,7 +217,7 @@ tools = await get_mcp_tools()
 response = await call_llm_with_tools(
     prompt="Your prompt",
     tools=tools,
-    model_name="gemini/gemini-2.5-flash",
+    model_name="gemini/gemini-3-flash",
 )
 ```
 
