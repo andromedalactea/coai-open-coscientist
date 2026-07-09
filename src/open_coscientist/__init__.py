@@ -45,7 +45,6 @@ from .cache import clear_cache, get_cache_stats, clear_node_cache, get_node_cach
 from .console import ConsoleReporter
 from .config import ToolRegistry, get_tool_registry
 from .run_output import RunFolder, RunTracer
-from .research_code_agent import ResearchCodeAgent, ResearchCodeAgentConfig
 
 __version__ = "0.1.0"
 __all__ = [
@@ -64,6 +63,4 @@ __all__ = [
     "get_tool_registry",
     "RunFolder",
     "RunTracer",
-    "ResearchCodeAgent",
-    "ResearchCodeAgentConfig",
 ]

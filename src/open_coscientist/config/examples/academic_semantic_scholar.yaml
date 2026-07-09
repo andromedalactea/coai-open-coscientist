@@ -15,7 +15,7 @@ version: "1.0"
 # MCP Server Definitions
 servers:
   academic_server:
-    url: "${ACADEMIC_MCP_SERVER_URL:-http://localhost:8890/mcp}"
+    url: "${ACADEMIC_MCP_SERVER_URL:-http://localhost:8889/mcp}"
     transport: "streamable_http"
     enabled: true
 

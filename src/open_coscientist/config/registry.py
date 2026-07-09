@@ -22,7 +22,7 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent / "tools.yaml"
 
 # user config locations (in order of precedence)
 USER_CONFIG_PATHS = [
-    Path.home() / ".coscientist" / "tools.yaml",
+    Path.home() / ".coscientist" / "tools.yaml",a
     Path.home() / ".config" / "coscientist" / "tools.yaml",
 ]
 

@@ -48,7 +48,9 @@ htmlcov/
 # coscientist specific
 .coscientist_cache/
 .coscientist_prompts/
-open_coscientist_states/
+# Run output (see DEFAULT_RUNS_DIR / COSCIENTIST_RUNS_DIR in run_output.py)
+coscientist_runs/
+runs/
 *.log
 
 # Logs directory

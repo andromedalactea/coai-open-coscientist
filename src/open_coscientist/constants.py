@@ -43,6 +43,14 @@ DEEPSEEK_MAX_OUTPUT_TOKENS = int(os.environ.get("DEEPSEEK_MAX_OUTPUT_TOKENS", "8
 """DeepSeek API max output tokens (deepseek-chat=8192, deepseek-reasoner can go higher).
 Override via DEEPSEEK_MAX_OUTPUT_TOKENS env var if using a model with higher limits."""
 
+DEEPSEEK_REASONING_EFFORT = os.environ.get("DEEPSEEK_REASONING_EFFORT", "")
+"""Reasoning effort for DeepSeek reasoning models (e.g. V4 Flash: low/medium/high/xhigh).
+Empty = don't send a reasoning effort. Forwarded to OpenRouter as reasoning.effort."""
+
+LLM_TRANSIENT_MAX_ATTEMPTS = int(os.environ.get("LLM_TRANSIENT_MAX_ATTEMPTS", "4"))
+"""Attempts for transient LLM/provider failures (network drops, 5xx, empty content).
+Makes the pipeline resilient to flaky OpenRouter provider routing."""
+
 LARGE_CONTEXT_MODEL = os.environ.get("LARGE_CONTEXT_MODEL", "gemini/gemini-2.5-pro")
 """Fallback model used when a ContextWindowExceededError occurs.
 Should be a model with a very large context window (e.g. Gemini 2.5 Pro = 1M tokens).

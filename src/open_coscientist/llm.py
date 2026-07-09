@@ -17,11 +17,78 @@ from jsonschema.exceptions import ValidationError
 import litellm
 
 from .cache import get_cache
-from .constants import DEEPSEEK_MAX_OUTPUT_TOKENS, LARGE_CONTEXT_MODEL
+from .constants import (
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
+    DEEPSEEK_REASONING_EFFORT,
+    LARGE_CONTEXT_MODEL,
+    LLM_TRANSIENT_MAX_ATTEMPTS,
+)
 
 logger = logging.getLogger(__name__)
 
 _deepseek_max_tokens_warned = False  # log the clamp warning only once
+
+
+class _EmptyLLMResponse(Exception):
+    """Raised internally when a provider returns no usable content.
+
+    Treated as a transient error so the request is retried (often a different
+    OpenRouter provider) instead of crashing the whole pipeline.
+    """
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """Heuristic: should this failure be retried against the provider?
+
+    Covers provider drops, gateway/5xx errors, timeouts, rate limits and the
+    empty-content case (common with flaky OpenRouter provider routing).
+    """
+    if isinstance(exc, _EmptyLLMResponse):
+        return True
+    s = str(exc).lower()
+    markers = (
+        "network connection lost",
+        "provider_unavailable",
+        "provider returned error",
+        "overloaded",
+        "service unavailable",
+        "internal server error",
+        "bad gateway",
+        "gateway timeout",
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection aborted",
+        "connection error",
+        "temporarily unavailable",
+        "rate limit",
+        "too many requests",
+        "'code': 429",
+        "'code': 500",
+        "'code': 502",
+        "'code': 503",
+        "'code': 504",
+    )
+    return any(m in s for m in markers)
+
+
+async def _backoff_sleep(attempt: int) -> None:
+    """Exponential backoff (capped) between transient retries."""
+    delay = min(2 ** (attempt - 1), 15)
+    await asyncio.sleep(delay)
+
+
+def _maybe_add_deepseek_reasoning(completion_args: Dict[str, Any], model_name: str) -> None:
+    """Inject the configured reasoning effort for DeepSeek reasoning models.
+
+    Forwarded to OpenRouter via the provider-native ``reasoning.effort`` body
+    field (supports DeepSeek-specific values like ``xhigh``). No-op when the
+    model is not DeepSeek or no effort is configured.
+    """
+    if not DEEPSEEK_REASONING_EFFORT or not _is_deepseek_model(model_name):
+        return
+    extra_body = completion_args.setdefault("extra_body", {})
+    extra_body["reasoning"] = {"effort": DEEPSEEK_REASONING_EFFORT}
 
 
 # suppress Pydantic serialization warnings from LiteLLM globally
@@ -365,98 +432,112 @@ async def call_llm(
 
     logger.debug(f"cache miss for prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}")
 
-    try:
-        # Build completion args
-        completion_args = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "drop_params": True,
-        }
+    # Build completion args once (deterministic across retries)
+    completion_args = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "drop_params": True,
+    }
 
-        # Try to add response_format based on schema or force_json
-        is_deepseek = _is_deepseek_model(model_name)
+    # Try to add response_format based on schema or force_json
+    is_deepseek = _is_deepseek_model(model_name)
 
-        if json_schema:
-            if is_deepseek:
-                # DeepSeek only supports json_object mode, not json_schema.
-                # Inject schema description into the prompt instead.
-                completion_args["response_format"] = {"type": "json_object"}
-                schema_suffix = _build_deepseek_json_prompt_suffix(json_schema)
-                completion_args["messages"][0]["content"] += schema_suffix
-                logger.debug(
-                    "DeepSeek model detected: using json_object mode "
-                    "with schema injected into prompt"
-                )
-            else:
-                try:
-                    completion_args["response_format"] = {
-                        "type": "json_schema",
-                        "json_schema": json_schema,
-                    }
-                except Exception as e:
-                    # Some models/providers don't support json_schema, fall back
-                    logger.warning(
-                        f"JSON schema not supported, falling back to json_object: {e}"
-                    )
-                    try:
-                        completion_args["response_format"] = {"type": "json_object"}
-                    except Exception:
-                        pass
-        elif force_json:
+    if json_schema:
+        if is_deepseek:
+            # DeepSeek only supports json_object mode, not json_schema.
+            # Inject schema description into the prompt instead.
             completion_args["response_format"] = {"type": "json_object"}
-            if is_deepseek:
-                # DeepSeek requires the word "json" in the prompt for json_object mode
-                msg_content = completion_args["messages"][0]["content"]
-                if "json" not in msg_content.lower():
-                    completion_args["messages"][0]["content"] += (
-                        "\n\nRespond with valid JSON output only."
-                    )
-                    logger.debug(
-                        "DeepSeek model detected: added 'json' keyword to prompt"
-                    )
-
-        logger.info(f"Executing LLM call to model: {model_name}")
-        response = await litellm.acompletion(**completion_args)
-
-        content = response.choices[0].message.content
-
-        if content is None or not content.strip():
-            logger.error(f"LLM returned None or empty content. Response: {response}")
-            raise ValueError(f"LLM returned None or empty content. Model: {model_name}")
-
-        # Cache the response (only reached if content is valid)
-        cache.set(
-            prompt,
-            model_name,
-            temperature,
-            max_tokens,
-            {"text": content},
-            json_schema=json_schema,
-            force_json=force_json,
-        )
-
-        return content
-
-    except Exception as e:
-        logger.error(f"LLM call failed: {e}")
-        logger.error(f"Model: {model_name}, max_tokens: {max_tokens}")
-        # --- large-context fallback ---
-        if _is_context_window_error(e) and model_name != LARGE_CONTEXT_MODEL:
-            logger.warning(
-                f"Context window exceeded for model '{model_name}'. "
-                f"Retrying with large-context fallback model '{LARGE_CONTEXT_MODEL}'."
+            schema_suffix = _build_deepseek_json_prompt_suffix(json_schema)
+            completion_args["messages"][0]["content"] += schema_suffix
+            logger.debug(
+                "DeepSeek model detected: using json_object mode "
+                "with schema injected into prompt"
             )
-            return await call_llm(
-                prompt=prompt,
-                model_name=LARGE_CONTEXT_MODEL,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                force_json=force_json,
+        else:
+            completion_args["response_format"] = {
+                "type": "json_schema",
+                "json_schema": json_schema,
+            }
+    elif force_json:
+        completion_args["response_format"] = {"type": "json_object"}
+        if is_deepseek:
+            # DeepSeek requires the word "json" in the prompt for json_object mode
+            msg_content = completion_args["messages"][0]["content"]
+            if "json" not in msg_content.lower():
+                completion_args["messages"][0]["content"] += (
+                    "\n\nRespond with valid JSON output only."
+                )
+                logger.debug(
+                    "DeepSeek model detected: added 'json' keyword to prompt"
+                )
+
+    _maybe_add_deepseek_reasoning(completion_args, model_name)
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, LLM_TRANSIENT_MAX_ATTEMPTS + 1):
+        try:
+            logger.info(
+                f"Executing LLM call to model: {model_name} "
+                f"(attempt {attempt}/{LLM_TRANSIENT_MAX_ATTEMPTS})"
+            )
+            response = await litellm.acompletion(**completion_args)
+
+            content = response.choices[0].message.content
+
+            if content is None or not content.strip():
+                # Often a transient provider drop (e.g. reasoning consumed the
+                # response or the upstream connection was lost) - retry.
+                raise _EmptyLLMResponse(
+                    f"LLM returned None or empty content. Model: {model_name}"
+                )
+
+            cache.set(
+                prompt,
+                model_name,
+                temperature,
+                max_tokens,
+                {"text": content},
                 json_schema=json_schema,
+                force_json=force_json,
             )
-        raise
+
+            return content
+
+        except Exception as e:
+            last_exc = e
+
+            # --- large-context fallback (not retryable on same model) ---
+            if _is_context_window_error(e) and model_name != LARGE_CONTEXT_MODEL:
+                logger.warning(
+                    f"Context window exceeded for model '{model_name}'. "
+                    f"Retrying with large-context fallback model '{LARGE_CONTEXT_MODEL}'."
+                )
+                return await call_llm(
+                    prompt=prompt,
+                    model_name=LARGE_CONTEXT_MODEL,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    force_json=force_json,
+                    json_schema=json_schema,
+                )
+
+            # --- transient provider errors: retry with backoff ---
+            if _is_transient_error(e) and attempt < LLM_TRANSIENT_MAX_ATTEMPTS:
+                logger.warning(
+                    f"Transient LLM error on attempt {attempt}/{LLM_TRANSIENT_MAX_ATTEMPTS} "
+                    f"for '{model_name}' ({type(e).__name__}: {e}). Retrying..."
+                )
+                await _backoff_sleep(attempt)
+                continue
+
+            logger.error(f"LLM call failed: {e}")
+            logger.error(f"Model: {model_name}, max_tokens: {max_tokens}")
+            raise
+
+    # Should not reach here, but guard just in case
+    raise last_exc if last_exc else RuntimeError("LLM call failed without exception")
 
 
 async def call_llm_json(
@@ -786,14 +867,34 @@ async def call_llm_with_tools(
         try:
             # Call LLM with tools
             logger.info(f"Executing LLM tool call to model: {model_name}")
-            response = await litellm.acompletion(
-                model=model_name,
-                messages=messages,
-                tools=tools,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                drop_params=True,
-            )
+            tool_completion_args = {
+                "model": model_name,
+                "messages": messages,
+                "tools": tools,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "drop_params": True,
+            }
+            _maybe_add_deepseek_reasoning(tool_completion_args, model_name)
+
+            # Inner retry for transient provider failures (network drops, 5xx)
+            response = None
+            for net_attempt in range(1, LLM_TRANSIENT_MAX_ATTEMPTS + 1):
+                try:
+                    response = await litellm.acompletion(**tool_completion_args)
+                    break
+                except Exception as net_e:
+                    if _is_context_window_error(net_e):
+                        raise
+                    if _is_transient_error(net_e) and net_attempt < LLM_TRANSIENT_MAX_ATTEMPTS:
+                        logger.warning(
+                            f"Transient LLM tool-call error on attempt "
+                            f"{net_attempt}/{LLM_TRANSIENT_MAX_ATTEMPTS} for '{model_name}' "
+                            f"({type(net_e).__name__}: {net_e}). Retrying..."
+                        )
+                        await _backoff_sleep(net_attempt)
+                        continue
+                    raise
 
             message = response.choices[0].message
 
