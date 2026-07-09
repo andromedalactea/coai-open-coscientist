@@ -9,9 +9,14 @@ placeholder is substituted with the absolute path to the IAU404 corpus
 Prerequisites:
 - Academic MCP server running (see ACADEMIC_MCP_SERVER_URL in .env)
 - Root .env filled in (OPENROUTER_API_KEY, MODEL_NAME, etc.)
+
+Speed knobs (all optional, set in .env):
+  INITIAL_HYPOTHESES_COUNT   default 4  (2 tool-based + 2 debate)
+  MAX_ITERATIONS             default 1  (one evolve loop)
+  EVOLUTION_MAX_COUNT        default 2
+  COSCIENTIST_DEV_MODE=true  → fewer lit-review papers (still full pipeline)
 """
 import os
-import asyncio
 from pathlib import Path
 
 try:
@@ -28,6 +33,21 @@ from rich.console import Console
 from rich.panel import Panel
 
 MODEL_NAME = os.getenv("MODEL_NAME", "openrouter/deepseek/deepseek-v4-flash")
+
+# Fast full-feature defaults: every node stays on, counts stay scientifically useful.
+INITIAL_HYPOTHESES_COUNT = int(os.getenv("INITIAL_HYPOTHESES_COUNT", "4"))
+MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "1"))
+EVOLUTION_MAX_COUNT = int(os.getenv("EVOLUTION_MAX_COUNT", "2"))
+ENABLE_LITERATURE_REVIEW = os.getenv("ENABLE_LITERATURE_REVIEW_NODE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+ENABLE_TOOL_CALLING = os.getenv("ENABLE_TOOL_CALLING_GENERATION", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # IAU404 technosignatures prompt + meeting corpus.
 # Override with env vars so another machine can point at local copies:
@@ -64,6 +84,12 @@ goal = load_goal()
 
 async def main():
     console = Console()
+    tools_count = max(1, INITIAL_HYPOTHESES_COUNT // 2) if ENABLE_TOOL_CALLING else 0
+    debate_count = INITIAL_HYPOTHESES_COUNT - tools_count if ENABLE_TOOL_CALLING else INITIAL_HYPOTHESES_COUNT
+    if ENABLE_TOOL_CALLING and debate_count == 0:
+        tools_count = INITIAL_HYPOTHESES_COUNT
+        debate_count = 0
+
     console.print()
     console.print(
         Panel(
@@ -77,8 +103,15 @@ async def main():
             f"Prompt file: [bold]{PROMPT_FILE}[/bold]\n"
             f"Context file: [bold]{CONTEXT_FILE}[/bold]\n"
             f"Pipeline model (all nodes): [bold]{MODEL_NAME}[/bold]\n"
-            f"Academic MCP: [bold]{os.getenv('ACADEMIC_MCP_SERVER_URL', 'http://localhost:8889/mcp')}[/bold]",
-            title="[cyan]Config[/cyan]",
+            f"Academic MCP: [bold]{os.getenv('ACADEMIC_MCP_SERVER_URL', 'http://localhost:8889/mcp')}[/bold]\n"
+            f"Hypotheses: [bold]{INITIAL_HYPOTHESES_COUNT}[/bold] "
+            f"({tools_count} tool-based + {debate_count} debate) | "
+            f"evolve top [bold]{EVOLUTION_MAX_COUNT}[/bold] × [bold]{MAX_ITERATIONS}[/bold] iter\n"
+            f"Features: lit_review=[bold]{ENABLE_LITERATURE_REVIEW}[/bold]  "
+            f"tool_gen=[bold]{ENABLE_TOOL_CALLING}[/bold]  "
+            f"dev_mode=[bold]{os.getenv('COSCIENTIST_DEV_MODE', 'false')}[/bold]  "
+            f"reasoning=[bold]{os.getenv('DEEPSEEK_REASONING_EFFORT', '(default)')}[/bold]",
+            title="[cyan]Config (fast full-feature)[/cyan]",
             border_style="cyan",
         )
     )
@@ -91,9 +124,9 @@ async def main():
 
     generator = HypothesisGenerator(
         model_name=MODEL_NAME,
-        max_iterations=2,
-        initial_hypotheses_count=7,
-        evolution_max_count=4,
+        max_iterations=MAX_ITERATIONS,
+        initial_hypotheses_count=INITIAL_HYPOTHESES_COUNT,
+        evolution_max_count=EVOLUTION_MAX_COUNT,
         tools_config="src/open_coscientist/config/examples/academic_semantic_scholar.yaml",
     )
 
@@ -104,8 +137,8 @@ async def main():
             research_goal=research_goal,
             progress_callback=default_progress_callback,
             opts={
-                "enable_literature_review_node": True,
-                "enable_tool_calling_generation": True,
+                "enable_literature_review_node": ENABLE_LITERATURE_REVIEW,
+                "enable_tool_calling_generation": ENABLE_TOOL_CALLING,
             },
             stream=True,
         ),

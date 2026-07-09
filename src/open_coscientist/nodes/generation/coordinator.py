@@ -223,18 +223,53 @@ async def _execute_generation_tasks(
         )
 
     # run all tasks in parallel
-    results = await asyncio.gather(*[task for _, task in tasks])
+    task_names = [name for name, _ in tasks]
+    logger.info(
+        f"Launching {len(tasks)} generation path(s) in parallel: {', '.join(task_names)}"
+    )
+    results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
 
-    # unpack results
+    # unpack results — keep successful paths even if one path fails
+    failed_paths: List[str] = []
     for i, (task_type, _) in enumerate(tasks):
+        result = results[i]
+        if isinstance(result, Exception):
+            logger.error(
+                f"Generation path '{task_type}' failed: "
+                f"{type(result).__name__}: {result}"
+            )
+            failed_paths.append(f"{task_type}: {type(result).__name__}: {result}")
+            continue
         if task_type == "tools":
-            tools_hypotheses = results[i]
+            tools_hypotheses = result
+            logger.info(f"Tool-based path finished: {len(tools_hypotheses)} hypotheses")
         elif task_type == "debate_lit":
-            debate_with_lit_hypotheses, transcripts = results[i]
+            debate_with_lit_hypotheses, transcripts = result
             debate_transcripts.extend(transcripts)
+            logger.info(
+                f"Debate-with-lit path finished: {len(debate_with_lit_hypotheses)} hypotheses"
+            )
         elif task_type == "debate_only":
-            debate_only_hypotheses, transcripts = results[i]
+            debate_only_hypotheses, transcripts = result
             debate_transcripts.extend(transcripts)
+            logger.info(
+                f"Debate-only path finished: {len(debate_only_hypotheses)} hypotheses"
+            )
+
+    total_ok = (
+        len(tools_hypotheses)
+        + len(debate_with_lit_hypotheses)
+        + len(debate_only_hypotheses)
+    )
+    if failed_paths and total_ok == 0:
+        raise RuntimeError(
+            "All generation paths failed:\n- " + "\n- ".join(failed_paths)
+        )
+    if failed_paths:
+        logger.warning(
+            f"Continuing with {total_ok} hypotheses from successful path(s); "
+            f"failed path(s): {'; '.join(failed_paths)}"
+        )
 
     return GenerationResults(
         tools_hypotheses=tools_hypotheses,

@@ -51,6 +51,15 @@ LLM_TRANSIENT_MAX_ATTEMPTS = int(os.environ.get("LLM_TRANSIENT_MAX_ATTEMPTS", "4
 """Attempts for transient LLM/provider failures (network drops, 5xx, empty content).
 Makes the pipeline resilient to flaky OpenRouter provider routing."""
 
+LLM_REQUEST_TIMEOUT = float(os.environ.get("LLM_REQUEST_TIMEOUT", "300"))
+"""Per-request timeout (seconds) passed to litellm.acompletion.
+OpenRouter hangs have been observed at the provider's ~600s default with no
+progress logs; a lower explicit timeout fails faster and surfaces retries."""
+
+LLM_HEARTBEAT_INTERVAL = float(os.environ.get("LLM_HEARTBEAT_INTERVAL", "30"))
+"""How often (seconds) to log 'still waiting on LLM' while a request is in flight.
+Helps distinguish a true freeze from a long but live provider call."""
+
 LARGE_CONTEXT_MODEL = os.environ.get("LARGE_CONTEXT_MODEL", "gemini/gemini-2.5-pro")
 """Fallback model used when a ContextWindowExceededError occurs.
 Should be a model with a very large context window (e.g. Gemini 2.5 Pro = 1M tokens).
@@ -79,11 +88,11 @@ DEFAULT_MAX_ITERATIONS = 1
 """Default number of refinement iterations."""
 
 # Debate generation parameters
-DEBATE_MIN_TURNS = 3
+DEBATE_MIN_TURNS = int(os.environ.get("DEBATE_MIN_TURNS", "3"))
 """Minimum number of debate turns before generating final hypotheses."""
 
-DEBATE_MAX_TURNS = 5
-"""Default number of debate turns (can be up to 10)."""
+DEBATE_MAX_TURNS = int(os.environ.get("DEBATE_MAX_TURNS", "5"))
+"""Default number of debate turns (can be up to 10). Override via DEBATE_MAX_TURNS."""
 
 DEFAULT_INITIAL_HYPOTHESES_COUNT = 12
 """Default number of initial hypotheses to generate to ensure a wide search space."""
@@ -121,11 +130,11 @@ DEFAULT_CACHE_DIR = ".coscientist_cache"
 DEFAULT_CACHE_ENABLED = True
 """Whether caching is enabled by default (controls both LLM and node-level caching)."""
 
-LITERATURE_REVIEW_PAPERS_COUNT = 10
+LITERATURE_REVIEW_PAPERS_COUNT = int(os.environ.get("LITERATURE_REVIEW_PAPERS_COUNT", "10"))
 """number of papers to collect from MCP servers/tools (configurable via env var)"""
 
-LITERATURE_REVIEW_PAPERS_COUNT_DEV = 4
-"""number of papers in dev mode for faster iteration"""
+LITERATURE_REVIEW_PAPERS_COUNT_DEV = int(os.environ.get("LITERATURE_REVIEW_PAPERS_COUNT_DEV", "4"))
+"""number of papers in dev mode for faster iteration (COSCIENTIST_DEV_MODE=true)"""
 
 LITERATURE_REVIEW_RECENCY_YEARS = 7
 """filter papers to last N years for better relevance (0 = no filter)"""
@@ -139,15 +148,17 @@ def get_draft_max_iterations(hypotheses_count: int) -> int:
 
     formula: base iterations (for reading papers) + per-hypothesis budget
     - need to read papers: 5 base iterations
-    - need to draft each hypothesis: ~2 iterations per hypothesis
-    - cap at 30 to prevent runaway
+    - need to draft each hypothesis: ~3 iterations per hypothesis
+      (search + absorb + write; models often over-search)
+    - reserve headroom so the soft-stop finalization turn is not the only option
+    - cap at 40 to prevent runaway
 
     examples:
-    - 3 hypotheses: 5 + 6 = 11 iterations
-    - 10 hypotheses: 5 + 20 = 25 iterations
-    - 50 hypotheses: 5 + 100 = 30 (capped)
+    - 3 hypotheses: 5 + 9 = 14 iterations
+    - 10 hypotheses: 5 + 30 = 35 iterations
+    - 50 hypotheses: 5 + 150 = 40 (capped)
     """
-    return min(5 + (hypotheses_count * 2), 30)
+    return min(5 + (hypotheses_count * 3), 40)
 
 
 def get_validate_max_iterations(hypotheses_count: int) -> int:
@@ -168,9 +179,9 @@ def get_validate_max_iterations(hypotheses_count: int) -> int:
     return min(hypotheses_count * 10, 50)
 
 
-GENERATE_LIT_TOOL_MAX_PAPERS = 3
-"""max papers to examine in draft/validate phase.."""
+GENERATE_LIT_TOOL_MAX_PAPERS = int(os.environ.get("GENERATE_LIT_TOOL_MAX_PAPERS", "3"))
+"""max papers to examine in draft/validate phase. Override via GENERATE_LIT_TOOL_MAX_PAPERS."""
 
-VALIDATION_SYNTHESIS_BATCH_SIZE = 3
+VALIDATION_SYNTHESIS_BATCH_SIZE = int(os.environ.get("VALIDATION_SYNTHESIS_BATCH_SIZE", "3"))
 """hypotheses per validation synthesis call. smaller = less output per call, more reliable for
 models with tight output token budgets (e.g. gemini-3-pro). trade-off: more parallel api calls."""

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import warnings
 
@@ -21,6 +22,8 @@ from .constants import (
     DEEPSEEK_MAX_OUTPUT_TOKENS,
     DEEPSEEK_REASONING_EFFORT,
     LARGE_CONTEXT_MODEL,
+    LLM_HEARTBEAT_INTERVAL,
+    LLM_REQUEST_TIMEOUT,
     LLM_TRANSIENT_MAX_ATTEMPTS,
 )
 
@@ -76,6 +79,108 @@ async def _backoff_sleep(attempt: int) -> None:
     """Exponential backoff (capped) between transient retries."""
     delay = min(2 ** (attempt - 1), 15)
     await asyncio.sleep(delay)
+
+
+async def _acompletion_with_heartbeat(
+    completion_args: Dict[str, Any],
+    *,
+    model_name: str,
+    attempt: int,
+    max_attempts: int,
+    phase: str,
+) -> Any:
+    """Run litellm.acompletion with an explicit timeout and periodic heartbeat logs.
+
+    Without this, OpenRouter hangs can sit silent for ~600s (provider default)
+    before surfacing a Timeout — looking like a freeze. Heartbeats make the wait
+    visible; the timeout fails the attempt so transient retries can kick in.
+    """
+    args = {**completion_args, "timeout": LLM_REQUEST_TIMEOUT}
+    prompt_chars = 0
+    messages = args.get("messages") or []
+    if messages:
+        content = messages[0].get("content") if isinstance(messages[0], dict) else None
+        if isinstance(content, str):
+            prompt_chars = len(content)
+    tools = args.get("tools")
+    tool_count = len(tools) if tools else 0
+
+    logger.info(
+        f"LLM request start [{phase}] model={model_name} "
+        f"attempt={attempt}/{max_attempts} timeout={LLM_REQUEST_TIMEOUT:.0f}s "
+        f"prompt_chars={prompt_chars} tools={tool_count} "
+        f"max_tokens={args.get('max_tokens')}"
+    )
+
+    start = time.monotonic()
+    task = asyncio.create_task(litellm.acompletion(**args))
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=LLM_HEARTBEAT_INTERVAL)
+            if done:
+                break
+            elapsed = time.monotonic() - start
+            logger.info(
+                f"LLM still waiting [{phase}] model={model_name} "
+                f"attempt={attempt}/{max_attempts} elapsed={elapsed:.0f}s "
+                f"(timeout={LLM_REQUEST_TIMEOUT:.0f}s)"
+            )
+        return task.result()
+    except Exception:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        elapsed = time.monotonic() - start
+        logger.warning(
+            f"LLM request failed [{phase}] model={model_name} "
+            f"attempt={attempt}/{max_attempts} elapsed={elapsed:.0f}s"
+        )
+        raise
+
+
+def _looks_like_llm_refusal(text: str) -> bool:
+    """Heuristic: detect short refusal / policy-block replies that are not JSON.
+
+    Seen in the wild from OpenRouter/DeepSeek: Chinese refusals like
+    '你好，我无法给到相关内容。' which then poison validation synthesis parsing
+    and trigger expensive individual retries.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    # Real JSON hypotheses responses are long; refusals are typically short.
+    if len(stripped) > 800:
+        return False
+    if stripped.startswith("{") or stripped.startswith("["):
+        return False
+    lower = stripped.lower()
+    markers = (
+        "i cannot",
+        "i can't",
+        "i'm unable",
+        "i am unable",
+        "unable to",
+        "cannot provide",
+        "can't provide",
+        "won't provide",
+        "will not provide",
+        "not able to",
+        "as an ai",
+        "against my",
+        "content policy",
+        "我无法",
+        "无法给到",
+        "无法提供",
+        "不能提供",
+        "抱歉",
+        "对不起",
+    )
+    return any(m in lower or m in stripped for m in markers)
 
 
 def _maybe_add_deepseek_reasoning(completion_args: Dict[str, Any], model_name: str) -> None:
@@ -482,7 +587,13 @@ async def call_llm(
                 f"Executing LLM call to model: {model_name} "
                 f"(attempt {attempt}/{LLM_TRANSIENT_MAX_ATTEMPTS})"
             )
-            response = await litellm.acompletion(**completion_args)
+            response = await _acompletion_with_heartbeat(
+                completion_args,
+                model_name=model_name,
+                attempt=attempt,
+                max_attempts=LLM_TRANSIENT_MAX_ATTEMPTS,
+                phase="call_llm",
+            )
 
             content = response.choices[0].message.content
 
@@ -491,6 +602,17 @@ async def call_llm(
                 # response or the upstream connection was lost) - retry.
                 raise _EmptyLLMResponse(
                     f"LLM returned None or empty content. Model: {model_name}"
+                )
+
+            if _looks_like_llm_refusal(content):
+                logger.error(
+                    f"LLM refusal detected for '{model_name}' "
+                    f"(attempt {attempt}/{LLM_TRANSIENT_MAX_ATTEMPTS}): "
+                    f"{content[:200]!r}"
+                )
+                raise _EmptyLLMResponse(
+                    f"LLM refused to answer (non-JSON refusal). Model: {model_name}. "
+                    f"Preview: {content[:120]!r}"
                 )
 
             cache.set(
@@ -861,8 +983,95 @@ async def call_llm_with_tools(
 
     messages = [{"role": "user", "content": prompt}]
 
+    async def _finalize_without_tools(reason: str) -> tuple[str, List[Dict[str, Any]]]:
+        """Force one final completion with tools disabled after budget exhaustion.
+
+        Models (esp. tool-happy ones) often keep calling search tools until the
+        hard iteration cap, then the whole pipeline crashes. Soft-stop instead:
+        keep tool results already gathered and demand the final JSON answer.
+        """
+        tool_summary = _summarize_tool_loop_history(messages)
+        logger.warning(
+            f"Forcing tool-loop finalization ({reason}). "
+            f"History: {tool_summary}"
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "TOOL BUDGET EXHAUSTED. Do NOT call any more tools. "
+                    "Using the literature/tool results already in this conversation, "
+                    "respond NOW with ONLY the required final JSON object "
+                    "(no markdown fences, no preamble)."
+                ),
+            }
+        )
+        final_args = {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "drop_params": True,
+            # Omit tools entirely — more reliable than tool_choice=none across providers
+        }
+        _maybe_add_deepseek_reasoning(final_args, model_name)
+
+        response = None
+        for net_attempt in range(1, LLM_TRANSIENT_MAX_ATTEMPTS + 1):
+            try:
+                response = await _acompletion_with_heartbeat(
+                    final_args,
+                    model_name=model_name,
+                    attempt=net_attempt,
+                    max_attempts=LLM_TRANSIENT_MAX_ATTEMPTS,
+                    phase="call_llm_with_tools:forced_final",
+                )
+                break
+            except Exception as net_e:
+                if _is_context_window_error(net_e):
+                    raise
+                if _is_transient_error(net_e) and net_attempt < LLM_TRANSIENT_MAX_ATTEMPTS:
+                    logger.warning(
+                        f"Transient error on forced finalization attempt "
+                        f"{net_attempt}/{LLM_TRANSIENT_MAX_ATTEMPTS} for '{model_name}' "
+                        f"({type(net_e).__name__}: {net_e}). Retrying..."
+                    )
+                    await _backoff_sleep(net_attempt)
+                    continue
+                raise
+
+        final_content = response.choices[0].message.content or ""
+        if not final_content.strip():
+            raise ValueError(
+                f"Forced tool-loop finalization returned empty content. Model: {model_name}"
+            )
+        if _looks_like_llm_refusal(final_content):
+            raise ValueError(
+                f"Forced tool-loop finalization got a refusal. Model: {model_name}. "
+                f"Preview: {final_content[:120]!r}"
+            )
+
+        messages.append({"role": "assistant", "content": final_content})
+        logger.info(
+            f"Forced tool-loop finalization succeeded "
+            f"(final_chars={len(final_content)}; {tool_summary})"
+        )
+        cache.set(
+            prompt,
+            model_name,
+            temperature,
+            max_tokens,
+            {"final_response": final_content, "message_history": messages},
+            tools=tools,
+        )
+        return final_content, messages
+
     for iteration in range(max_iterations):
-        logger.debug(f"llm tool call iteration {iteration + 1}/{max_iterations}")
+        remaining_after = max_iterations - (iteration + 1)
+        logger.info(
+            f"LLM tool-call iteration {iteration + 1}/{max_iterations} "
+            f"(remaining_after={remaining_after})"
+        )
 
         try:
             # Call LLM with tools
@@ -870,18 +1079,40 @@ async def call_llm_with_tools(
             tool_completion_args = {
                 "model": model_name,
                 "messages": messages,
-                "tools": tools,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "drop_params": True,
             }
+            # On the last budgeted turn, omit tools so the model must answer.
+            if remaining_after > 0:
+                tool_completion_args["tools"] = tools
+            else:
+                logger.info(
+                    f"Last tool-loop turn ({iteration + 1}/{max_iterations}): "
+                    "omitting tools to force final answer"
+                )
             _maybe_add_deepseek_reasoning(tool_completion_args, model_name)
 
-            # Inner retry for transient provider failures (network drops, 5xx)
+            # Inner retry for transient provider failures (network drops, 5xx, refusals)
             response = None
+            message = None
             for net_attempt in range(1, LLM_TRANSIENT_MAX_ATTEMPTS + 1):
                 try:
-                    response = await litellm.acompletion(**tool_completion_args)
+                    response = await _acompletion_with_heartbeat(
+                        tool_completion_args,
+                        model_name=model_name,
+                        attempt=net_attempt,
+                        max_attempts=LLM_TRANSIENT_MAX_ATTEMPTS,
+                        phase=f"call_llm_with_tools:iter{iteration + 1}",
+                    )
+                    message = response.choices[0].message
+                    has_tools = bool(getattr(message, "tool_calls", None))
+                    content = message.content if message.content else ""
+                    if not has_tools and _looks_like_llm_refusal(content):
+                        raise _EmptyLLMResponse(
+                            f"LLM refused to answer during tool-call loop. "
+                            f"Model: {model_name}. Preview: {content[:120]!r}"
+                        )
                     break
                 except Exception as net_e:
                     if _is_context_window_error(net_e):
@@ -895,8 +1126,6 @@ async def call_llm_with_tools(
                         await _backoff_sleep(net_attempt)
                         continue
                     raise
-
-            message = response.choices[0].message
 
             # Convert message to dict format for history
             message_dict = {
@@ -922,15 +1151,50 @@ async def call_llm_with_tools(
 
             # Check if LLM wants to call tools
             if hasattr(message, "tool_calls") and message.tool_calls:
-                logger.debug(f"llm requested {len(message.tool_calls)} tool calls")
+                logger.info(
+                    f"LLM tool-call iter {iteration + 1}/{max_iterations}: "
+                    f"requested {len(message.tool_calls)} tool(s): "
+                    + ", ".join(tc.function.name for tc in message.tool_calls)
+                )
+
+                # Last budgeted turn still requested tools despite tool_choice=none
+                # (some providers ignore it) — execute once, then force finalize.
+                is_last_turn = remaining_after == 0
 
                 # Execute all tool calls in parallel
+                tool_start = time.monotonic()
                 tool_results = await asyncio.gather(
                     *[tool_executor(tc) for tc in message.tool_calls]
+                )
+                tool_elapsed = time.monotonic() - tool_start
+                logger.info(
+                    f"LLM tool-call iter {iteration + 1}: executed "
+                    f"{len(message.tool_calls)} tool(s) in {tool_elapsed:.1f}s"
                 )
 
                 # Add tool results to message history
                 messages.extend(tool_results)
+
+                if is_last_turn:
+                    return await _finalize_without_tools(
+                        f"last iteration {iteration + 1}/{max_iterations} still requested tools"
+                    )
+
+                # Nudge the model when budget is nearly gone
+                if remaining_after <= 2:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"You have only {remaining_after} tool-loop turn(s) left. "
+                                "Stop searching and produce the final JSON answer now "
+                                "unless one more tool call is strictly necessary."
+                            ),
+                        }
+                    )
+                    logger.info(
+                        f"Injected tool-budget nudge ({remaining_after} turn(s) remaining)"
+                    )
 
                 # Continue loop - LLM will see tool results and respond
                 continue
@@ -943,7 +1207,10 @@ async def call_llm_with_tools(
                     logger.error("LLM returned empty final response in tool call loop")
                     raise ValueError(f"LLM returned empty final response. Model: {model_name}")
 
-                logger.debug(f"llm finished after {iteration + 1} iterations")
+                logger.info(
+                    f"LLM tool-call finished after {iteration + 1} iterations "
+                    f"(final_chars={len(final_content)})"
+                )
 
                 # Cache the successful result (only reached if content is valid)
                 cache.set(
@@ -977,6 +1244,31 @@ async def call_llm_with_tools(
                 )
             raise
 
-    # Max iterations reached
-    logger.warning(f"Max iterations ({max_iterations}) reached in tool call loop")
-    raise RuntimeError(f"LLM tool call loop exceeded max iterations ({max_iterations})")
+    # Max iterations reached without a clean final answer — soft-stop instead of crash
+    return await _finalize_without_tools(
+        f"exceeded max iterations ({max_iterations})"
+    )
+
+
+def _summarize_tool_loop_history(messages: List[Dict[str, Any]]) -> str:
+    """Compact summary of tool-loop history for diagnostics."""
+    assistant_turns = 0
+    tool_calls = 0
+    tool_names: Dict[str, int] = {}
+    for msg in messages:
+        role = msg.get("role")
+        if role == "assistant":
+            assistant_turns += 1
+            for tc in msg.get("tool_calls") or []:
+                tool_calls += 1
+                name = (
+                    tc.get("function", {}).get("name")
+                    if isinstance(tc, dict)
+                    else getattr(getattr(tc, "function", None), "name", "unknown")
+                )
+                tool_names[name or "unknown"] = tool_names.get(name or "unknown", 0) + 1
+    names = ", ".join(f"{n}={c}" for n, c in tool_names.items()) or "none"
+    return (
+        f"assistant_turns={assistant_turns}, tool_calls={tool_calls}, tools=[{names}], "
+        f"messages={len(messages)}"
+    )

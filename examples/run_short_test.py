@@ -54,9 +54,9 @@ async def main():
 
     generator = HypothesisGenerator(
         model_name=MODEL_NAME,
-        max_iterations=1,            # one refine/evolve loop (fast)
-        initial_hypotheses_count=3,  # small for a quick test
-        evolution_max_count=2,
+        max_iterations=int(os.getenv("MAX_ITERATIONS", "1")),
+        initial_hypotheses_count=int(os.getenv("INITIAL_HYPOTHESES_COUNT", "4")),
+        evolution_max_count=int(os.getenv("EVOLUTION_MAX_COUNT", "2")),
         tools_config="src/open_coscientist/config/examples/academic_semantic_scholar.yaml",
     )
 

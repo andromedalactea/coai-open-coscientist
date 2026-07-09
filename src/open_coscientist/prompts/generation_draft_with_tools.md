@@ -70,6 +70,10 @@ The literature review node already analyzed papers and identified key themes. Us
 
 ## Available Tools
 
+**Tool Budget:** You have up to {{max_iterations}} tool-loop turns. Prefer 0–3 targeted searches total.
+The literature review context above is already rich — do **not** keep searching until the budget runs out.
+After at most a few searches (or immediately if the lit review is enough), stop calling tools and output the final JSON.
+
 {{tool_instructions}}
 
 ## CRITICAL: MAXIMIZE DIVERSITY
@@ -128,4 +132,4 @@ The literature review node already analyzed papers and identified key themes. Us
 - If copying from literature, convert LaTeX notation to Unicode symbols or plain text
 - Prefer concise plain text when it communicates the idea equally well
 
-Draft {{hypotheses_count}} diverse hypothesis ideas now. Output raw JSON with "drafts" array containing objects with the 5 required fields above.
+Draft {{hypotheses_count}} diverse hypothesis ideas now. If you already have enough context from the literature review, skip tools and output raw JSON immediately with a "drafts" array containing objects with the required fields above.
