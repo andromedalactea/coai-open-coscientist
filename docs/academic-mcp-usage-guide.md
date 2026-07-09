@@ -53,10 +53,10 @@ Before starting, ensure you have:
 From the project root:
 
 ```bash
-cp mcp_server_academic/.env.example mcp_server_academic/.env
+cp mcps/mcp_server_academic/.env.example mcps/mcp_server_academic/.env
 ```
 
-### 1.2 Edit `mcp_server_academic/.env`
+### 1.2 Edit `mcps/mcp_server_academic/.env`
 
 Set at least these variables:
 
@@ -110,7 +110,7 @@ From the project root:
 source .venv/bin/activate   # or: source venv/bin/activate
 
 # Install the academic MCP package
-pip install -e ./mcp_server_academic
+pip install -e ./mcps/mcp_server_academic
 
 # Start the server
 uvicorn mcp_server_academic.server:app --host 0.0.0.0 --port 8889
@@ -285,7 +285,7 @@ When you call `academic_search_with_fulltext`:
 ### "Academic search pipeline is unavailable"
 
 - Ensure the Academic MCP server is running: `curl http://localhost:8889`
-- Check `mcp_server_academic/.env` has `UNPAYWALL_EMAIL` set.
+- Check `mcps/mcp_server_academic/.env` has `UNPAYWALL_EMAIL` set.
 - Semantic Scholar may rate-limit; add `SEMANTIC_SCHOLAR_API_KEY` for higher limits.
 
 ### "No papers with both arXiv ID and DOI"
@@ -295,7 +295,7 @@ When you call `academic_search_with_fulltext`:
 
 ### Reranker errors
 
-- Ensure `OPENAI_API_KEY` (or another LLM key) is set in `mcp_server_academic/.env`.
+- Ensure `OPENAI_API_KEY` (or another LLM key) is set in `mcps/mcp_server_academic/.env`.
 - Check `RERANKER_MODEL` is a valid LiteLLM model name.
 
 ### Unpaywall 422 error
@@ -306,7 +306,7 @@ When you call `academic_search_with_fulltext`:
 
 - arXiv rate limit: 3 seconds between requests. Large batches take time.
 - Some papers have no open-access PDF on Unpaywall.
-- Check logs: `COSCIENTIST_MCP_LOG_LEVEL=DEBUG` in `mcp_server_academic/.env`.
+- Check logs: `COSCIENTIST_MCP_LOG_LEVEL=DEBUG` in `mcps/mcp_server_academic/.env`.
 
 ### Wrong MCP server used
 
@@ -328,6 +328,6 @@ When you call `academic_search_with_fulltext`:
 | Academic MCP port | 8889 |
 | PubMed MCP port | 8888 |
 | Config file | `src/open_coscientist/config/examples/academic_semantic_scholar.yaml` |
-| Env file | `mcp_server_academic/.env` |
+| Env file | `mcps/mcp_server_academic/.env` |
 | Paper cache | `COSCIENTIST_LIT_REVIEW_DIR` (default: `./cache/literature_review`) |
 | Docker service | `mcp-server-academic` |

@@ -29,17 +29,34 @@ from rich.panel import Panel
 
 MODEL_NAME = os.getenv("MODEL_NAME", "openrouter/deepseek/deepseek-v4-flash")
 
-# IAU404 technosignatures prompt + corpus (intentionally ignoring astrobiology.md).
-PROMPTS_DIR = Path(
+# IAU404 technosignatures prompt + meeting corpus.
+# Override with env vars so another machine can point at local copies:
+#   export IAU404_PROMPT_FILE=/path/to/technosignatures_iaus404.md
+#   export IAU404_CONTEXT_FILE=/path/to/00_COMBINED_PLAYLIST.md
+_DEFAULT_PROMPTS_DIR = Path(
     "/home/andromedalactea/universityDevelops/thesis/coai/coai-denario/develop-eggs/prompts"
 )
-PROMPT_FILE = PROMPTS_DIR / "technosignatures_iaus404.md"
-CONTEXT_FILE = PROMPTS_DIR / "00_COMBINED_PLAYLIST.md"
+PROMPT_FILE = Path(
+    os.getenv("IAU404_PROMPT_FILE", str(_DEFAULT_PROMPTS_DIR / "technosignatures_iaus404.md"))
+)
+CONTEXT_FILE = Path(
+    os.getenv("IAU404_CONTEXT_FILE", str(_DEFAULT_PROMPTS_DIR / "00_COMBINED_PLAYLIST.md"))
+)
 
 
 def load_goal() -> str:
+    if not PROMPT_FILE.is_file():
+        raise FileNotFoundError(
+            f"IAU404 prompt not found: {PROMPT_FILE}\n"
+            "Set IAU404_PROMPT_FILE to the path of technosignatures_iaus404.md"
+        )
+    if not CONTEXT_FILE.is_file():
+        raise FileNotFoundError(
+            f"IAU404 meeting corpus not found: {CONTEXT_FILE}\n"
+            "Set IAU404_CONTEXT_FILE to the path of 00_COMBINED_PLAYLIST.md"
+        )
     text = PROMPT_FILE.read_text(encoding="utf-8")
-    return text.replace("{{CONTEXT_FILE}}", str(CONTEXT_FILE))
+    return text.replace("{{CONTEXT_FILE}}", str(CONTEXT_FILE.resolve()))
 
 
 goal = load_goal()
