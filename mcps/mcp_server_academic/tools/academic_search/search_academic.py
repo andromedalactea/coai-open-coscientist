@@ -12,6 +12,7 @@ from typing import List
 from mcp_server_academic.models import Article
 from mcp_server_academic.semantic_scholar import (
     SemanticScholarClient,
+    SemanticScholarRateLimitError,
     extract_paper_metadata,
 )
 
@@ -33,7 +34,20 @@ async def search_academic(query: str, max_papers: int = 10) -> str:
 
     try:
         client = SemanticScholarClient()
-        raw_papers = await client.search_papers(query, limit=max_papers)
+        try:
+            raw_papers = await client.search_papers(query, limit=max_papers)
+        except SemanticScholarRateLimitError as e:
+            logger.warning("%s — falling back to arXiv API", e)
+            raw_papers = []
+
+        if not raw_papers:
+            logger.warning(
+                "No Semantic Scholar results for query: %s — trying arXiv API fallback",
+                query[:80],
+            )
+            from mcp_server_academic.arxiv_downloader import search_arxiv_api
+
+            raw_papers = await search_arxiv_api(query, max_papers=max_papers)
 
         if not raw_papers:
             logger.warning(f"No results found for query: {query}")

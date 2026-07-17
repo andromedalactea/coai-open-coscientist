@@ -22,14 +22,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "langgraph~=1.0.6",
-    "langchain-core~=1.2.7",
+    # Pins relaxed slightly so Denario + open-coscientist share coai/.venv.
+    "langgraph>=1.0.6,<2",
+    "langchain-core>=1.2.7,<2",
     "langchain-mcp-adapters>=0.2.1",
-    "langsmith~=0.6.2",
-    "litellm~=1.80.16",
-    "typing-extensions~=4.15.0",
-    "rich~=14.2.0",
-    "jsonschema~=4.26.0",
+    "langsmith>=0.6.2,<1",
+    "litellm>=1.80.16,<2",
+    "typing-extensions>=4.15.0",
+    "rich>=14.2.0,<16",
+    "jsonschema>=4.26.0",
     "pyyaml>=6.0",
 ]
 

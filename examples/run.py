@@ -1,10 +1,9 @@
 """
 Final run for Open Coscientist with streaming output.
 
-This drives the idea-generation pipeline using the IAU404 technosignatures
-prompt (`technosignatures_iaus404.md`). The prompt's `{{CONTEXT_FILE}}`
-placeholder is substituted with the absolute path to the IAU404 corpus
-(`00_COMBINED_PLAYLIST.md`).
+Loads the IAU404 technosignatures prompt and embeds one **random large chunk**
+of the symposium transcript playlist into the research goal (via Denario's
+``iau404_context`` helper when available, with a local fallback).
 
 Prerequisites:
 - Academic MCP server running (see ACADEMIC_MCP_SERVER_URL in .env)
@@ -15,6 +14,9 @@ Speed knobs (all optional, set in .env):
   MAX_ITERATIONS             default 1  (one evolve loop)
   EVOLUTION_MAX_COUNT        default 2
   COSCIENTIST_DEV_MODE=true  → fewer lit-review papers (still full pipeline)
+
+IAU404 context:
+  IAU404_CONTEXT_CHUNKS / IAU404_CHUNK_INDEX / IAU404_CHUNK_SEED
 """
 import os
 from pathlib import Path
@@ -65,18 +67,38 @@ CONTEXT_FILE = Path(
 
 
 def load_goal() -> str:
-    if not PROMPT_FILE.is_file():
-        raise FileNotFoundError(
-            f"IAU404 prompt not found: {PROMPT_FILE}\n"
-            "Set IAU404_PROMPT_FILE to the path of technosignatures_iaus404.md"
+    """Embed a random large IAU404 transcript chunk into the research goal."""
+    try:
+        from denario.iau404_context import load_iau404_research_goal
+
+        loaded = load_iau404_research_goal(
+            prompt_file=PROMPT_FILE,
+            context_file=CONTEXT_FILE,
         )
-    if not CONTEXT_FILE.is_file():
-        raise FileNotFoundError(
-            f"IAU404 meeting corpus not found: {CONTEXT_FILE}\n"
-            "Set IAU404_CONTEXT_FILE to the path of 00_COMBINED_PLAYLIST.md"
+        chunk = loaded.chunk
+        print(
+            f"[iau404] chunk {chunk.index + 1}/{chunk.num_chunks} "
+            f"({chunk.video_end - chunk.video_start} talks, {chunk.char_count} chars)"
         )
-    text = PROMPT_FILE.read_text(encoding="utf-8")
-    return text.replace("{{CONTEXT_FILE}}", str(CONTEXT_FILE.resolve()))
+        return loaded.research_goal
+    except ImportError:
+        # Fallback if denario is not on PYTHONPATH: path-only (legacy).
+        if not PROMPT_FILE.is_file():
+            raise FileNotFoundError(
+                f"IAU404 prompt not found: {PROMPT_FILE}\n"
+                "Set IAU404_PROMPT_FILE to the path of technosignatures_iaus404.md"
+            )
+        if not CONTEXT_FILE.is_file():
+            raise FileNotFoundError(
+                f"IAU404 meeting corpus not found: {CONTEXT_FILE}\n"
+                "Set IAU404_CONTEXT_FILE to the path of 00_COMBINED_PLAYLIST.md"
+            )
+        print(
+            "[warn] denario.iau404_context unavailable — embedding file PATH only "
+            "(transcripts will NOT be visible to the model)."
+        )
+        text = PROMPT_FILE.read_text(encoding="utf-8")
+        return text.replace("{{CONTEXT_FILE}}", str(CONTEXT_FILE.resolve()))
 
 
 goal = load_goal()

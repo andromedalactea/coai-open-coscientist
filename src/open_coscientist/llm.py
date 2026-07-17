@@ -281,10 +281,41 @@ def _build_deepseek_json_prompt_suffix(json_schema: Dict[str, Any]) -> str:
         f"\n\n--- REQUIRED JSON OUTPUT FORMAT ---\n"
         f"You MUST respond with valid JSON matching the \"{schema_name}\" schema below.\n"
         f"Output ONLY the JSON object, no markdown fences, no extra text.\n"
-        f"IMPORTANT: Keep all string values concise (1-3 sentences each) to fit within token limits.\n\n"
+        f"IMPORTANT: Keep all string values concise (1-3 sentences each) to fit within token limits.\n"
+        f"IMPORTANT: In string values, escape every backslash (write \\\\mu not \\mu, "
+        f"\\\\Delta not \\Delta). Prefer plain Unicode (μm, ΔG) over LaTeX escapes.\n\n"
         f"Expected JSON structure:\n{{\n{structure}\n}}\n"
         f"--- END FORMAT ---"
     )
+
+
+def _fix_invalid_json_escapes(s: str) -> str:
+    """
+    Escape backslashes that are not valid JSON escape sequences.
+
+    LLMs often emit LaTeX-like or scientific notation (\\mu, \\Delta, \\approx)
+    inside JSON strings; those are invalid escapes and break json.loads mid-document.
+    """
+
+    def _replace(match: re.Match) -> str:
+        seq = match.group(0)
+        # Keep valid escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+        if seq in ('\\"', "\\\\", "\\/", "\\b", "\\f", "\\n", "\\r", "\\t"):
+            return seq
+        if re.fullmatch(r"\\u[0-9a-fA-F]{4}", seq):
+            return seq
+        # Incomplete \\uXXXX or any other \\X → escape the backslash
+        return "\\" + seq
+
+    return re.sub(r"\\u[0-9a-fA-F]{0,4}|\\.", _replace, s)
+
+
+def _strip_json_comments_and_control_chars(s: str) -> str:
+    """Remove // comments and non-whitespace control characters that break JSON."""
+    # Strip // line comments (common LLM artifact); keep URLs like https://
+    s = re.sub(r"(?<!:)//[^\n]*", "", s)
+    # Replace raw control chars (except \t \n \r) with spaces
+    return "".join(ch if (ord(ch) >= 32 or ch in "\t\n\r") else " " for ch in s)
 
 
 def attempt_json_repair(
@@ -366,8 +397,19 @@ def attempt_json_repair(
 
         return result
 
+    def _loads_cleaned(s: str) -> Dict[str, Any]:
+        cleaned = _strip_json_comments_and_control_chars(s)
+        cleaned = _fix_invalid_json_escapes(cleaned)
+        cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+        result = json.loads(cleaned)
+        if not isinstance(result, dict):
+            raise TypeError("Parsed JSON is not a dictionary")
+        return result
+
     # Minor repairs (safe, don't indicate truncation)
     minor_repairs = [
+        # Fix invalid escapes / control chars / trailing commas (common with scientific text)
+        _loads_cleaned,
         # Remove trailing commas before closing braces/brackets
         lambda s: json.loads(re.sub(r",(\s*[}\]])", r"\1", s)),
     ]
@@ -376,6 +418,8 @@ def attempt_json_repair(
     major_repairs = [
         # Close unterminated strings and truncated JSON (most common Gemini issue)
         lambda s: json.loads(close_truncated_json(s)),
+        # Clean escapes then close truncation
+        lambda s: _loads_cleaned(close_truncated_json(s)),
         # Remove trailing commas AND close truncated JSON
         lambda s: json.loads(close_truncated_json(re.sub(r",(\s*[}\]])", r"\1", s))),
         # Aggressively remove incomplete trailing content and close JSON
@@ -845,8 +889,26 @@ async def call_llm_json(
                     logger.info("Major repair needed (truncation detected), retrying immediately")
                     continue
 
-            # All repairs exhausted for this attempt
+            # All repairs exhausted for this attempt — feed parse error back for next try
             last_error = parse_error or ValueError("All repair strategies failed")
+            if not is_final_attempt and parse_error is not None:
+                err_ctx = ""
+                if isinstance(parse_error, json.JSONDecodeError) and last_response_text:
+                    pos = parse_error.pos or 0
+                    err_ctx = last_response_text[max(0, pos - 80) : pos + 80]
+                parse_feedback = (
+                    "\n\n--- JSON PARSE ERROR FROM PREVIOUS ATTEMPT ---\n"
+                    f"Error: {parse_error}\n"
+                    f"Context around error: ...{err_ctx}...\n"
+                    "Return ONLY valid JSON. Escape all backslashes in strings "
+                    "(write \\\\mu not \\mu). Do not include comments or trailing commas.\n"
+                    "---"
+                )
+                prompt = original_prompt + parse_feedback
+                logger.warning(
+                    f"JSON parse failed on attempt {attempt}: {parse_error}. "
+                    "Added parse feedback to retry prompt."
+                )
 
         except Exception as e:
             last_error = e

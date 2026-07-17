@@ -316,10 +316,27 @@ class ConsoleReporter:
 
             # check if literature review failed
             if lit_review == LITERATURE_REVIEW_FAILED:
+                fail_detail = ""
+                for msg in state.get("messages") or []:
+                    if isinstance(msg, dict) and msg.get("metadata", {}).get("error"):
+                        fail_detail = str(msg.get("content") or "")
+                        break
+                queries = state.get("literature_review_queries") or []
+                query_line = ""
+                if queries:
+                    query_line = "\nQueries tried: " + "; ".join(
+                        str(q)[:80] for q in queries[:3]
+                    )
+                detail_block = (
+                    f"\n\n{fail_detail}{query_line}" if (fail_detail or query_line) else ""
+                )
                 self.console.print(
                     Panel(
                         "[bold red]Literature review failed![/bold red]\n\n"
-                        "The system will fall back to standard generation without literature context.",
+                        "The system will fall back to standard generation without literature context."
+                        f"{detail_block}\n\n"
+                        "Tip: set SEMANTIC_SCHOLAR_API_KEY (or SEMANTIC_SCHOLAR_KEY) on the "
+                        "Academic MCP container and restart it to avoid Semantic Scholar 429s.",
                         title="[red]Literature Review Failed[/red]",
                         border_style="red",
                         expand=False,

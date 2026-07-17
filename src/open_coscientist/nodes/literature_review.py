@@ -62,6 +62,8 @@ from .literature_review_helpers import (
     get_papers_needing_content,
     parse_content_result,
     get_paper_content_for_analysis,
+    compact_research_goal_for_literature,
+    default_literature_fallback_queries,
 )
 
 if TYPE_CHECKING:
@@ -185,6 +187,16 @@ async def _phase1_generate_queries(
     """Phase 1: Generate search queries."""
     logger.info("Phase 1: generating search queries")
 
+    # Never feed IAU404 transcript dumps (100k–300k chars) into query generation
+    # or Semantic Scholar — that yields 0 papers / rate-limit storms.
+    lit_goal = compact_research_goal_for_literature(state.get("research_goal", ""))
+    if len(lit_goal) < len(state.get("research_goal", "") or ""):
+        logger.info(
+            "Compacted research_goal for literature search: %d -> %d chars",
+            len(state.get("research_goal", "") or ""),
+            len(lit_goal),
+        )
+
     queries = []
 
     # try MCP-based generation first if configured
@@ -195,28 +207,74 @@ async def _phase1_generate_queries(
             logger.info(f"Using MCP query generation: {tool_cfg.mcp_tool_name} (format: {query_format})")
             queries = await _generate_queries_via_mcp(
                 mcp_client,
-                state["research_goal"],
+                lit_goal,
                 tool_cfg.mcp_tool_name,
                 query_format,
             )
 
-    # fallback to LLM-based generation
+    # fallback to LLM-based generation (with compacted goal)
     if not queries:
-        queries = await _generate_queries_via_llm(state, config)
+        queries = await _generate_queries_via_llm_compact(state, config, lit_goal)
 
-    # final fallback to research goal
+    # final fallback: short domain keywords — NEVER the raw research_goal
     if not queries:
-        logger.warning("No queries generated, using research goal")
-        queries = [state["research_goal"]]
+        logger.warning("No queries generated, using short domain fallback queries")
+        queries = default_literature_fallback_queries(lit_goal)
 
-    # limit to 3 queries max
-    queries = queries[:3]
+    # Drop absurdly long queries (LLM sometimes echoes the goal).
+    cleaned = []
+    for q in queries:
+        q_text = " ".join(str(q or "").split())
+        if not q_text:
+            continue
+        if len(q_text) > 300:
+            logger.warning("Dropping oversized literature query (%d chars)", len(q_text))
+            continue
+        cleaned.append(q_text)
+    queries = cleaned[:3] or default_literature_fallback_queries(lit_goal)[:3]
 
     logger.info(f"Generated {len(queries)} search queries")
     for i, q in enumerate(queries, 1):
-        logger.debug(f"Query {i}: {q}")
+        logger.info(f"Query {i}: {q}")
 
     return queries
+
+
+async def _generate_queries_via_llm_compact(
+    state: WorkflowState,
+    config: SearchConfig,
+    lit_goal: str,
+) -> List[str]:
+    """Generate queries using LLM with a compacted research goal."""
+    source_type = determine_query_source_type(
+        config.workflow,
+        config.tool_registry,
+        config.search_tool_config,
+        config.is_multi_source,
+    )
+    logger.debug(f"Using {source_type} query generation prompt")
+
+    prompt = get_literature_review_query_generation_prompt(
+        research_goal=lit_goal,
+        source_type=source_type,
+        preferences=state.get("preferences", ""),
+        attributes=state.get("attributes", []),
+        user_literature=state.get("literature", []),
+        user_hypotheses=state.get("starting_hypotheses", []),
+    )
+
+    try:
+        result = await call_llm_json(
+            prompt=prompt,
+            model_name=state["model_name"],
+            max_tokens=DEFAULT_MAX_TOKENS,
+            temperature=HIGH_TEMPERATURE,
+            json_schema=LITERATURE_QUERY_SCHEMA,
+        )
+        return result.get("queries", [])
+    except Exception as e:
+        logger.warning(f"LLM query generation failed: {e}")
+        return []
 
 
 # =============================================================================
@@ -968,6 +1026,21 @@ async def literature_review_node(state: WorkflowState) -> Dict[str, Any]:
     if not source_available:
         logger.error("Literature source MCP service unavailable")
         await emit_progress(state, "literature_review_error", "Literature review failed (source unavailable)", 0.2)
+        print(
+            "[error] stage=literature_review msg=literature source service unavailable",
+            flush=True,
+        )
+        try:
+            from cmbagent.utils.error_log import log_run_event
+
+            log_run_event(
+                "literature_review",
+                "literature source service unavailable",
+                level="error",
+                marker="LITERATURE_REVIEW_FAILED",
+            )
+        except Exception:
+            pass
         return make_failure_result("literature source service unavailable")
 
     await emit_progress(state, "literature_review_start", "Conducting literature review...", 0.1)
@@ -1011,8 +1084,18 @@ async def literature_review_node(state: WorkflowState) -> Dict[str, Any]:
     # handle edge cases
     if len(all_paper_metadata) == 0:
         logger.warning("No papers collected")
-        await emit_progress(state, "literature_review_complete", "Literature review completed (no papers found)", 0.2)
-        return make_failure_result("no papers found", queries=queries)
+        reason = (
+            "no papers found (Semantic Scholar may be rate-limited without "
+            "SEMANTIC_SCHOLAR_API_KEY / SEMANTIC_SCHOLAR_KEY; queries="
+            f"{queries!r})"
+        )
+        await emit_progress(
+            state,
+            "literature_review_complete",
+            f"Literature review completed ({reason})",
+            0.2,
+        )
+        return make_failure_result(reason, queries=queries)
 
     if with_fulltext == 0:
         logger.error("No papers have fulltexts available - cannot perform analysis")

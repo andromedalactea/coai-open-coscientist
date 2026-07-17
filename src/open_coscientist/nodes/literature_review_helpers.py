@@ -239,6 +239,99 @@ def get_papers_with_content(
 
 
 # =============================================================================
+# Research-goal compaction for literature search
+# =============================================================================
+
+# Markers used by Denario IAU404 embedding — strip these before query generation
+# so Semantic Scholar is never searched with a 200k+ character transcript dump.
+_IAU404_BEGIN_MARKERS = (
+    "---- BEGIN IAU404 TRANSCRIPT CHUNK ----",
+    "## IAU Symposium 404 Inspiration Corpus",
+    "### IAU404 transcript chunk",
+)
+
+_DEFAULT_FALLBACK_QUERIES = (
+    "technosignature exoplanet atmosphere",
+    "biosignature technosignature SETI",
+    "JWST exoplanet transmission spectroscopy",
+)
+
+_MAX_LIT_GOAL_CHARS = 6000
+
+
+def compact_research_goal_for_literature(
+    research_goal: str,
+    max_chars: int = _MAX_LIT_GOAL_CHARS,
+) -> str:
+    """Return a short research-goal slice suitable for lit-review query generation.
+
+    Strips embedded IAU404 / symposium transcript dumps and clamps length so the
+    LLM (and Semantic Scholar) never receive a 100k–300k character blob.
+    """
+    text = str(research_goal or "").strip()
+    if not text:
+        return ""
+
+    cut_at = None
+    for marker in _IAU404_BEGIN_MARKERS:
+        idx = text.find(marker)
+        if idx != -1 and (cut_at is None or idx < cut_at):
+            cut_at = idx
+    # Always strip the symposium dump when present, even if the prompt preamble
+    # before the marker is short (<200 chars).
+    if cut_at is not None and cut_at > 0:
+        text = text[:cut_at].rstrip()
+        if not text:
+            # Marker at start — keep a tiny stub so callers still have something.
+            text = "astrobiology technosignature exoplanet literature review"
+    text = "\n".join(line for line in text.splitlines() if line.strip())
+    if len(text) > max_chars:
+        text = text[:max_chars].rsplit("\n", 1)[0] or text[:max_chars]
+        text = text.rstrip() + "\n[...truncated for literature search...]"
+    return text
+
+
+def default_literature_fallback_queries(research_goal: str = "") -> List[str]:
+    """Short keyword queries used when LLM/MCP query generation fails.
+
+    Never fall back to the raw research_goal string — that can be hundreds of
+    thousands of characters (IAU404 transcripts) and returns 0 papers.
+    """
+    compact = compact_research_goal_for_literature(research_goal, max_chars=400)
+    # Pull a few distinctive tokens from the compact goal if present.
+    tokens = [
+        t.strip(".,;:()[]{}\"'").lower()
+        for t in compact.replace("\n", " ").split()
+        if len(t.strip(".,;:()[]{}\"'")) >= 5
+    ]
+    domain_hits = [
+        t
+        for t in tokens
+        if t
+        in {
+            "technosignature",
+            "technosignatures",
+            "biosignature",
+            "biosignatures",
+            "exoplanet",
+            "exoplanets",
+            "astrobiology",
+            "atmosphere",
+            "jwst",
+            "seti",
+            "photochem",
+            "poseidon",
+        }
+    ]
+    if domain_hits:
+        return [
+            " ".join(dict.fromkeys(domain_hits[:4])),
+            *_DEFAULT_FALLBACK_QUERIES[:2],
+        ]
+    return list(_DEFAULT_FALLBACK_QUERIES)
+
+
+# =============================================================================
 # Result builders
 # =============================================================================
 

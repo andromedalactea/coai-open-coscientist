@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
+# Semantic Scholar rejects / mishandles extremely long query strings; keep
+# searches keyword-sized even if a caller accidentally passes a full research goal.
+MAX_QUERY_CHARS = 300
+MAX_429_RETRIES = 5
+
 SEARCH_FIELDS = ",".join([
     "paperId",
     "externalIds",
@@ -32,14 +37,45 @@ SEARCH_FIELDS = ",".join([
 DETAIL_FIELDS = SEARCH_FIELDS
 
 
+class SemanticScholarRateLimitError(RuntimeError):
+    """Raised when Semantic Scholar keeps returning HTTP 429 after retries."""
+
+
+def _resolve_api_key(explicit: Optional[str] = None) -> str:
+    if explicit:
+        return explicit.strip()
+    return (
+        os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+        or os.environ.get("SEMANTIC_SCHOLAR_KEY", "").strip()
+    )
+
+
+def truncate_search_query(query: str, max_chars: int = MAX_QUERY_CHARS) -> str:
+    """Clamp a search query to a safe length for Semantic Scholar / HTTP URLs."""
+    text = " ".join(str(query or "").split())
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars].rsplit(" ", 1)[0] or text[:max_chars]
+    logger.warning(
+        "Search query truncated from %d to %d chars for Semantic Scholar",
+        len(text),
+        len(truncated),
+    )
+    return truncated
+
+
 class SemanticScholarClient:
     """Async client for the Semantic Scholar Graph API."""
 
     def __init__(self, api_key: Optional[str] = None):
-        self._api_key = api_key or os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
-        self._min_delay = 0.15 if self._api_key else 1.1
+        self._api_key = _resolve_api_key(api_key)
+        self._min_delay = 0.15 if self._api_key else 1.25
         self._last_request_time = 0.0
         self._lock = asyncio.Lock()
+        if not self._api_key:
+            logger.warning(
+                "SemanticScholarClient running without API key — expect frequent 429s"
+            )
 
     def _headers(self) -> Dict[str, str]:
         headers = {"User-Agent": "OpenCoscientist-Academic-MCP/0.1"}
@@ -55,15 +91,27 @@ class SemanticScholarClient:
                 await asyncio.sleep(self._min_delay - elapsed)
             self._last_request_time = asyncio.get_event_loop().time()
 
-    async def _get(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get(self, url: str, params: Dict[str, Any], _retries: int = 0) -> Dict[str, Any]:
         await self._rate_limit()
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url, params=params, headers=self._headers())
             if response.status_code == 429:
+                if _retries >= MAX_429_RETRIES:
+                    raise SemanticScholarRateLimitError(
+                        "Semantic Scholar rate limit (HTTP 429) after "
+                        f"{MAX_429_RETRIES} retries. Set SEMANTIC_SCHOLAR_API_KEY "
+                        "(or SEMANTIC_SCHOLAR_KEY) on the Academic MCP server and restart it."
+                    )
                 retry_after = int(response.headers.get("Retry-After", "5"))
-                logger.warning(f"Rate limited by Semantic Scholar, waiting {retry_after}s")
-                await asyncio.sleep(retry_after)
-                return await self._get(url, params)
+                wait = max(retry_after, 2 ** _retries)
+                logger.warning(
+                    "Rate limited by Semantic Scholar (attempt %d/%d), waiting %ss",
+                    _retries + 1,
+                    MAX_429_RETRIES,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                return await self._get(url, params, _retries=_retries + 1)
             response.raise_for_status()
             return response.json()
 
@@ -86,6 +134,11 @@ class SemanticScholarClient:
         Returns:
             List of paper dicts with all requested fields.
         """
+        query = truncate_search_query(query)
+        if not query:
+            logger.warning("Empty search query after truncation; skipping Semantic Scholar")
+            return []
+
         params: Dict[str, Any] = {
             "query": query,
             "limit": min(limit, 100),
@@ -107,6 +160,8 @@ class SemanticScholarClient:
 
             try:
                 data = await self._get(url, params)
+            except SemanticScholarRateLimitError:
+                raise
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 500 and year_range and "year" in params:
                     logger.warning(
@@ -142,6 +197,9 @@ class SemanticScholarClient:
             return data
         except httpx.HTTPStatusError as e:
             logger.warning(f"Failed to fetch paper {paper_id}: {e}")
+            return None
+        except SemanticScholarRateLimitError as e:
+            logger.warning(f"Rate limited fetching paper {paper_id}: {e}")
             return None
 
     async def check_available(self) -> bool:

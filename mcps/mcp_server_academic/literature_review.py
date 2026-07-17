@@ -131,12 +131,38 @@ class AcademicSource(DocumentSource):
             year_range = f"{min_year}-{current_year}"
 
         search_limit = max(max_papers * 10, 100)
-        raw_papers = await self._s2_client.search_papers(
-            query, limit=search_limit, year_range=year_range
-        )
+        raw_papers: List[Dict[str, Any]] = []
+        try:
+            raw_papers = await self._s2_client.search_papers(
+                query, limit=search_limit, year_range=year_range
+            )
+        except Exception as e:
+            # Import locally to avoid circular imports at module load.
+            from mcp_server_academic.semantic_scholar import SemanticScholarRateLimitError
+
+            if isinstance(e, SemanticScholarRateLimitError) or "429" in str(e):
+                logger.warning(
+                    "Semantic Scholar rate-limited for query '%s'; falling back to arXiv API",
+                    query[:80],
+                )
+            else:
+                logger.warning(
+                    "Semantic Scholar search failed for '%s': %s; falling back to arXiv API",
+                    query[:80],
+                    e,
+                )
 
         if not raw_papers:
-            logger.warning(f"No results from Semantic Scholar for: {query}")
+            logger.warning(
+                "No results from Semantic Scholar for: %s — trying arXiv API fallback",
+                query[:80],
+            )
+            from mcp_server_academic.arxiv_downloader import search_arxiv_api
+
+            raw_papers = await search_arxiv_api(query, max_papers=search_limit)
+
+        if not raw_papers:
+            logger.warning(f"No results from Semantic Scholar or arXiv for: {query}")
             return self._supplement_from_pool(
                 {}, shared_dir, run_dir, max_papers, set()
             )

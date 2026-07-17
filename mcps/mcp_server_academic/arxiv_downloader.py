@@ -12,7 +12,7 @@ import logging
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import httpx
 
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 ARXIV_EPRINT_URL = "https://arxiv.org/e-print/{arxiv_id}"
 ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}"
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
 REQUEST_DELAY = 3.0
 
 _last_request_time = 0.0
@@ -34,6 +35,91 @@ async def _rate_limit():
         if elapsed < REQUEST_DELAY:
             await asyncio.sleep(REQUEST_DELAY - elapsed)
         _last_request_time = asyncio.get_event_loop().time()
+
+
+def _truncate_query(query: str, max_chars: int = 200) -> str:
+    text = " ".join(str(query or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0] or text[:max_chars]
+
+
+async def search_arxiv_api(query: str, max_papers: int = 10) -> List[Dict[str, Any]]:
+    """Search arXiv Atom API and return Semantic-Scholar-shaped paper dicts.
+
+    Used as a fallback when Semantic Scholar is rate-limited or returns nothing.
+    """
+    import xml.etree.ElementTree as ET
+
+    q = _truncate_query(query)
+    if not q:
+        return []
+
+    params = {
+        "search_query": f"all:{q}",
+        "start": 0,
+        "max_results": max(1, min(int(max_papers), 50)),
+        "sortBy": "relevance",
+        "sortOrder": "descending",
+    }
+    logger.info("Searching arXiv API fallback: '%s' (max=%s)", q, params["max_results"])
+    await _rate_limit()
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(ARXIV_API_URL, params=params)
+            response.raise_for_status()
+            xml_text = response.text
+    except Exception as e:
+        logger.error("arXiv API search failed: %s", e)
+        return []
+
+    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        logger.error("Failed to parse arXiv Atom response: %s", e)
+        return []
+
+    papers: List[Dict[str, Any]] = []
+    for entry in root.findall("atom:entry", ns):
+        id_text = (entry.findtext("atom:id", default="", namespaces=ns) or "").strip()
+        # id like http://arxiv.org/abs/2401.12345v1
+        arxiv_id = id_text.rstrip("/").split("/")[-1]
+        if "v" in arxiv_id:
+            arxiv_id = arxiv_id.rsplit("v", 1)[0]
+        title = " ".join((entry.findtext("atom:title", default="", namespaces=ns) or "").split())
+        abstract = " ".join(
+            (entry.findtext("atom:summary", default="", namespaces=ns) or "").split()
+        )
+        published = entry.findtext("atom:published", default="", namespaces=ns) or ""
+        year = None
+        if len(published) >= 4 and published[:4].isdigit():
+            year = int(published[:4])
+        authors = []
+        for author in entry.findall("atom:author", ns):
+            name = author.findtext("atom:name", default="", namespaces=ns)
+            if name:
+                authors.append({"name": name})
+        if not arxiv_id or not title:
+            continue
+        papers.append(
+            {
+                "paperId": f"arxiv:{arxiv_id}",
+                "externalIds": {"ArXiv": arxiv_id},
+                "title": title,
+                "abstract": abstract,
+                "year": year,
+                "authors": authors,
+                "venue": "arXiv",
+                "citationCount": 0,
+                "publicationDate": published[:10] if published else "",
+                "journal": {"name": "arXiv"},
+                "openAccessPdf": {"url": ARXIV_PDF_URL.format(arxiv_id=arxiv_id)},
+                "url": f"https://arxiv.org/abs/{arxiv_id}",
+            }
+        )
+    logger.info("arXiv API returned %d papers for '%s'", len(papers), q)
+    return papers
 
 
 async def download_source(arxiv_id: str) -> Optional[bytes]:

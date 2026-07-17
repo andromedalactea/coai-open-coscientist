@@ -6,8 +6,11 @@ Review node - adaptive peer review strategy based on hypothesis count.
 """
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List
+
+from jsonschema.exceptions import ValidationError
 
 from ..constants import (
     THINKING_MAX_TOKENS,
@@ -326,16 +329,36 @@ async def review_node(state: WorkflowState) -> Dict[str, Any]:
     tool_registry = state.get("tool_registry")
 
     if use_comparative:
-        reviews = await review_comparative_batch(
-            hypotheses=hypotheses,
-            research_goal=state["research_goal"],
-            model_name=state["model_name"],
-            supervisor_guidance=supervisor_guidance,
-            meta_review=meta_review,
-            run_id=state.get("run_id"),
-            tool_registry=tool_registry,
-        )
-        llm_calls = 1  # Single batch call
+        try:
+            reviews = await review_comparative_batch(
+                hypotheses=hypotheses,
+                research_goal=state["research_goal"],
+                model_name=state["model_name"],
+                supervisor_guidance=supervisor_guidance,
+                meta_review=meta_review,
+                run_id=state.get("run_id"),
+                tool_registry=tool_registry,
+            )
+            llm_calls = 1  # Single batch call
+        except (json.JSONDecodeError, ValidationError, ValueError) as e:
+            # DeepSeek json_object mode often breaks on large nested batch reviews
+            # (invalid escapes like \mu in scientific text). Fall back to smaller
+            # per-hypothesis calls rather than killing the whole run.
+            logger.warning(
+                f"Comparative batch review failed ({type(e).__name__}: {e}). "
+                "Falling back to parallel individual reviews."
+            )
+            strategy_name = "parallel (fallback from comparative batch)"
+            reviews = await review_parallel_individual(
+                hypotheses=hypotheses,
+                research_goal=state["research_goal"],
+                model_name=state["model_name"],
+                supervisor_guidance=supervisor_guidance,
+                meta_review=meta_review,
+                run_id=state.get("run_id"),
+                tool_registry=tool_registry,
+            )
+            llm_calls = num_hypotheses
     else:
         reviews = await review_parallel_individual(
             hypotheses=hypotheses,

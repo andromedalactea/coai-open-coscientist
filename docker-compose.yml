@@ -33,6 +33,9 @@ services:
       - mcps/mcp_server_academic/.env
     environment:
       - COSCIENTIST_ACADEMIC_MCP_PORT=8889
+      # Prefer SEMANTIC_SCHOLAR_API_KEY; also accept Denario's SEMANTIC_SCHOLAR_KEY.
+      - SEMANTIC_SCHOLAR_API_KEY=${SEMANTIC_SCHOLAR_API_KEY:-${SEMANTIC_SCHOLAR_KEY:-}}
+      - SEMANTIC_SCHOLAR_KEY=${SEMANTIC_SCHOLAR_KEY:-}
     volumes:
       - ./mcps/mcp_server_academic/cache:/app/mcp_server_academic/cache
     restart: unless-stopped
