@@ -370,6 +370,14 @@ def attempt_json_repair(
     minor_repairs = [
         # Remove trailing commas before closing braces/brackets
         lambda s: json.loads(re.sub(r",(\s*[}\]])", r"\1", s)),
+        # Allow raw newlines/tabs inside string values (common LLM slip)
+        lambda s: json.loads(s, strict=False),
+        lambda s: json.loads(re.sub(r",(\s*[}\]])", r"\1", s), strict=False),
+        # Strip markdown fences the model wrapped around the object
+        lambda s: json.loads(
+            re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", s, flags=re.IGNORECASE),
+            strict=False,
+        ),
     ]
 
     # Major repairs (indicate truncation/incomplete, only on final retry)
@@ -475,6 +483,15 @@ def get_fallback_response(json_schema: Optional[Dict[str, Any]]) -> Optional[Dic
             "diversity_assessment": "Analysis failed - skipping deduplication",
             "redundancy_assessment": "Analysis failed - skipping deduplication",
         }
+
+    if schema_name == "hypothesis_batch_review":
+        # review_comparative_batch backfills neutral reviews for any hypothesis
+        # missing from the array, so an empty list keeps the tournament running.
+        logger.warning(
+            "Batch review failed after all retries. "
+            "Returning empty reviews so scoring falls back to defaults."
+        )
+        return {"reviews": []}
 
     # Critical nodes - no fallback
     return None
